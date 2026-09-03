@@ -112,7 +112,7 @@ class ReviewRun(Base):
     base_sha: Mapped[str] = mapped_column(String(64))
     head_sha: Mapped[str] = mapped_column(String(64))
     summary: Mapped[str] = mapped_column(Text)
-    github_review_id: Mapped[int | None]
+    github_review_id: Mapped[int | None] = mapped_column(BigInteger)
     reviewed_file_count: Mapped[int]
     finding_count: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -133,7 +133,7 @@ class FindingRecord(Base):
     confidence: Mapped[float]
     title: Mapped[str] = mapped_column(String(300))
     fingerprint: Mapped[str] = mapped_column(String(64))
-    github_comment_id: Mapped[int | None]
+    github_comment_id: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     review_run: Mapped[ReviewRun] = relationship(back_populates="findings")
 

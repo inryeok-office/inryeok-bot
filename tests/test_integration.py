@@ -1,12 +1,12 @@
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import BigInteger, select
 
 from app.codex.runner import FakeRunner
 from app.codex.schemas import Category, Finding, ReviewOutput, Severity
 from app.config import Settings
-from app.jobs.models import RepositorySettings, ReviewJob, ReviewRun, TriggerType
+from app.jobs.models import FindingRecord, RepositorySettings, ReviewJob, ReviewRun, TriggerType
 from app.review.diff import ChangedFile
 from app.review.service import ReviewService, ReviewSkipped
 
@@ -27,7 +27,7 @@ class FakeGitHub:
 
     async def create_review(self, *args: object) -> dict[str, int]:
         self.payload = args[-1]
-        return {"id": 99}
+        return {"id": 5_107_673_581}
 
     async def create_check_run(self, *args: object) -> dict[str, int]:
         self.checks.append({"operation": "create", "arguments": args})
@@ -53,6 +53,11 @@ class FakeCheckout:
 
     async def __aexit__(self, *_: object) -> None:
         pass
+
+
+def test_github_published_identifier_columns_are_bigint() -> None:
+    assert isinstance(ReviewRun.__table__.c.github_review_id.type, BigInteger)
+    assert isinstance(FindingRecord.__table__.c.github_comment_id.type, BigInteger)
 
 
 @pytest.mark.asyncio
@@ -96,7 +101,7 @@ async def test_fake_end_to_end_worker_pipeline(app_client, monkeypatch) -> None:
         github = FakeGitHub()
         await ReviewService(session, github, FakeRunner(output)).execute(job)  # type: ignore[arg-type]
         run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == job.id))
-        assert run and run.finding_count == 1 and run.github_review_id == 99
+        assert run and run.finding_count == 1 and run.github_review_id == 5_107_673_581
         assert github.payload["comments"][0]["side"] == "RIGHT"
         assert github.checks[0]["operation"] == "create"
         assert github.checks[-1]["arguments"][4] == "neutral"
