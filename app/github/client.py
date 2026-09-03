@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 
@@ -130,54 +130,47 @@ class GitHubClient:
             ).json()
         )
 
-    async def create_check_run(
-        self,
-        installation_id: int,
-        owner: str,
-        repo: str,
-        head_sha: str,
-        status: Literal["queued", "in_progress"] = "in_progress",
+    async def _add_eyes_reaction(
+        self, installation_id: int, owner: str, repo: str, path: str
+    ) -> bool:
+        reactions = list((await self._request(installation_id, "GET", path)).json())
+        bot_login = self.settings.github_bot_login.casefold()
+        if any(
+            reaction.get("content") == "eyes"
+            and str(reaction.get("user", {}).get("login", "")).casefold() == bot_login
+            for reaction in reactions
+        ):
+            return False
+        await self._request(installation_id, "POST", path, json={"content": "eyes"})
+        return True
+
+    async def add_pull_request_eyes_reaction(
+        self, installation_id: int, owner: str, repo: str, number: int
+    ) -> bool:
+        return await self._add_eyes_reaction(
+            installation_id, owner, repo, f"/repos/{owner}/{repo}/issues/{number}/reactions"
+        )
+
+    async def add_comment_eyes_reaction(
+        self, installation_id: int, owner: str, repo: str, comment_id: int
+    ) -> bool:
+        return await self._add_eyes_reaction(
+            installation_id,
+            owner,
+            repo,
+            f"/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
+        )
+
+    async def create_issue_comment(
+        self, installation_id: int, owner: str, repo: str, number: int, body: str
     ) -> dict[str, Any]:
         return dict(
             (
                 await self._request(
                     installation_id,
                     "POST",
-                    f"/repos/{owner}/{repo}/check-runs",
-                    json={
-                        "name": "Inryeok Review",
-                        "head_sha": head_sha,
-                        "status": status,
-                        "output": {
-                            "title": "Review in progress",
-                            "summary": "Inryeok Bot is reviewing this pull request.",
-                        },
-                    },
-                )
-            ).json()
-        )
-
-    async def complete_check_run(
-        self,
-        installation_id: int,
-        owner: str,
-        repo: str,
-        check_run_id: int,
-        conclusion: str,
-        title: str,
-        summary: str,
-    ) -> dict[str, Any]:
-        return dict(
-            (
-                await self._request(
-                    installation_id,
-                    "PATCH",
-                    f"/repos/{owner}/{repo}/check-runs/{check_run_id}",
-                    json={
-                        "status": "completed",
-                        "conclusion": conclusion,
-                        "output": {"title": title, "summary": summary},
-                    },
+                    f"/repos/{owner}/{repo}/issues/{number}/comments",
+                    json={"body": body},
                 )
             ).json()
         )

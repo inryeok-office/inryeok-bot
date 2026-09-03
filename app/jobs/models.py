@@ -138,6 +138,28 @@ class FindingRecord(Base):
     review_run: Mapped[ReviewRun] = relationship(back_populates="findings")
 
 
+class ReviewFailureNotice(Base):
+    __tablename__ = "review_failure_notices"
+    __table_args__ = (
+        UniqueConstraint(
+            "repository_owner",
+            "repository_name",
+            "pull_request_number",
+            "head_sha",
+            "error_category",
+            name="uq_review_failure_notice",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repository_owner: Mapped[str] = mapped_column(String(255))
+    repository_name: Mapped[str] = mapped_column(String(255))
+    pull_request_number: Mapped[int]
+    head_sha: Mapped[str] = mapped_column(String(64))
+    error_category: Mapped[str] = mapped_column(String(32))
+    github_comment_id: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class WebhookDelivery(Base):
     __tablename__ = "webhook_deliveries"
     id: Mapped[int] = mapped_column(primary_key=True)

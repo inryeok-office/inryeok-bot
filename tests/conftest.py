@@ -17,6 +17,9 @@ from app.main import app
 class FakeGitHub:
     permission = "write"
 
+    def __init__(self) -> None:
+        self.reactions: list[tuple[str, int]] = []
+
     async def get_collaborator_permission(self, *_: object) -> str:
         return self.permission
 
@@ -25,6 +28,14 @@ class FakeGitHub:
 
     async def list_installation_repositories(self, *_: object) -> list[dict[str, object]]:
         return [{"full_name": "acme/repo"}]
+
+    async def add_pull_request_eyes_reaction(self, *_: object) -> bool:
+        self.reactions.append(("pull_request", int(_[-1])))
+        return True
+
+    async def add_comment_eyes_reaction(self, *_: object) -> bool:
+        self.reactions.append(("comment", int(_[-1])))
+        return True
 
 
 @pytest.fixture

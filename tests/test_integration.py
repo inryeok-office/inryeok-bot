@@ -23,19 +23,10 @@ class FakeGitHub:
         )
         self.tokens = Tokens()
         self.payload = None
-        self.checks: list[dict[str, object]] = []
 
     async def create_review(self, *args: object) -> dict[str, int]:
         self.payload = args[-1]
         return {"id": 5_107_673_581}
-
-    async def create_check_run(self, *args: object) -> dict[str, int]:
-        self.checks.append({"operation": "create", "arguments": args})
-        return {"id": 55}
-
-    async def complete_check_run(self, *args: object) -> dict[str, int]:
-        self.checks.append({"operation": "complete", "arguments": args})
-        return {"id": 55}
 
 
 class FakeCheckout:
@@ -103,13 +94,12 @@ async def test_fake_end_to_end_worker_pipeline(app_client, monkeypatch) -> None:
         run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == job.id))
         assert run and run.finding_count == 1 and run.github_review_id == 5_107_673_581
         assert github.payload["comments"][0]["side"] == "RIGHT"
-        assert github.checks[0]["operation"] == "create"
-        assert github.checks[-1]["arguments"][4] == "neutral"
+        assert "검토했습니다" in github.payload["body"]
         assert FakeCheckout.diff_arguments[:2] == ("a" * 40, "b" * 40)
 
 
 @pytest.mark.asyncio
-async def test_no_findings_posts_summary_and_completes_success(app_client, monkeypatch) -> None:
+async def test_no_findings_posts_korean_completion_review(app_client, monkeypatch) -> None:
     _, factory = app_client
     monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
     async with factory() as session:
@@ -133,12 +123,11 @@ async def test_no_findings_posts_summary_and_completes_success(app_client, monke
             session, github, FakeRunner(ReviewOutput(summary="ok", findings=[]))
         ).execute(job)  # type: ignore[arg-type]
         assert github.payload["comments"] == []
-        assert "0 findings" in github.payload["body"]
-        assert github.checks[-1]["arguments"][4] == "success"
+        assert "게시할 문제를 찾지 못했습니다" in github.payload["body"]
 
 
 @pytest.mark.asyncio
-async def test_internal_failure_completes_check_with_failure(app_client, monkeypatch) -> None:
+async def test_internal_failure_does_not_create_check_run(app_client, monkeypatch) -> None:
     _, factory = app_client
     monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
 
@@ -165,8 +154,6 @@ async def test_internal_failure_completes_check_with_failure(app_client, monkeyp
         github = FakeGitHub()
         with pytest.raises(RuntimeError, match="sensitive internal detail"):
             await ReviewService(session, github, BrokenRunner()).execute(job)  # type: ignore[arg-type]
-        assert github.checks[-1]["arguments"][4] == "failure"
-        assert "sensitive" not in github.checks[-1]["arguments"][6]
 
 
 @pytest.mark.asyncio
@@ -217,11 +204,10 @@ async def test_completed_auto_review_summary_is_not_repeated(app_client, monkeyp
             session, github, FakeRunner(ReviewOutput(summary="ok", findings=[]))
         ).execute(retry)  # type: ignore[arg-type]
         assert github.payload is None
-        assert github.checks[-1]["arguments"][4] == "success"
 
 
 @pytest.mark.asyncio
-async def test_disabled_repository_completes_check_as_skipped(app_client) -> None:
+async def test_disabled_repository_is_skipped_without_check_run(app_client) -> None:
     _, factory = app_client
     async with factory() as session:
         session.add(
@@ -249,4 +235,3 @@ async def test_disabled_repository_completes_check_as_skipped(app_client) -> Non
             await ReviewService(
                 session, github, FakeRunner(ReviewOutput(summary="unused", findings=[]))
             ).execute(job)  # type: ignore[arg-type]
-        assert github.checks[-1]["arguments"][4] == "skipped"

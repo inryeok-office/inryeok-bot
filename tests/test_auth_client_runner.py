@@ -6,7 +6,7 @@ import respx
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from app.codex.runner import CodexRunner
+from app.codex.runner import CodexRunner, classify_codex_failure
 from app.config import Settings
 from app.github.auth import InstallationTokenProvider
 from app.github.client import GitHubClient
@@ -83,8 +83,12 @@ async def test_codex_runner_uses_read_only_structured_exec(monkeypatch, tmp_path
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_check_run_is_created_in_progress_and_completed() -> None:
-    settings = Settings(environment="test", github_api_url="https://api.github.test")
+async def test_eyes_reaction_is_added_once_per_bot() -> None:
+    settings = Settings(
+        environment="test",
+        github_api_url="https://api.github.test",
+        github_bot_login="reviewbot[bot]",
+    )
     async with httpx.AsyncClient() as http:
         github = GitHubClient(settings, http)
 
@@ -93,17 +97,35 @@ async def test_check_run_is_created_in_progress_and_completed() -> None:
                 return "token"
 
         github.tokens = Tokens()  # type: ignore[assignment]
-        created = respx.post("https://api.github.test/repos/acme/repo/check-runs").mock(
+        listed = respx.get("https://api.github.test/repos/acme/repo/issues/7/reactions").mock(
+            return_value=httpx.Response(
+                200, json=[{"content": "eyes", "user": {"login": "reviewbot[bot]"}}]
+            )
+        )
+        created = respx.post("https://api.github.test/repos/acme/repo/issues/8/reactions").mock(
             return_value=httpx.Response(201, json={"id": 55})
         )
-        completed = respx.patch("https://api.github.test/repos/acme/repo/check-runs/55").mock(
-            return_value=httpx.Response(200, json={"id": 55})
+        respx.get("https://api.github.test/repos/acme/repo/issues/8/reactions").mock(
+            return_value=httpx.Response(200, json=[])
         )
-        await github.create_check_run(1, "acme", "repo", "a" * 40)
-        await github.complete_check_run(1, "acme", "repo", 55, "success", "Done", "No findings")
+        assert not await github.add_pull_request_eyes_reaction(1, "acme", "repo", 7)
+        assert await github.add_pull_request_eyes_reaction(1, "acme", "repo", 8)
 
-    assert created.calls[0].request.content
-    assert json.loads(created.calls[0].request.content)["status"] == "in_progress"
-    completed_payload = json.loads(completed.calls[0].request.content)
-    assert completed_payload["status"] == "completed"
-    assert completed_payload["conclusion"] == "success"
+    assert listed.call_count == 1
+    assert json.loads(created.calls[0].request.content) == {"content": "eyes"}
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("usage quota exceeded", "CODEX_QUOTA"),
+        ("HTTP 429 too many requests", "CODEX_RATE_LIMIT"),
+        ("login required", "CODEX_AUTH"),
+        ("service unavailable", "CODEX_SERVICE_UNAVAILABLE"),
+        ("unexpected failure", "CODEX_FAILED"),
+    ],
+)
+def test_codex_failure_classification(message: str, expected: str) -> None:
+    error = classify_codex_failure(1, b"", message.encode())
+    assert error.code == expected
+    assert message not in str(error)

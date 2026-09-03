@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import ValidationError
@@ -15,6 +16,7 @@ from app.jobs.models import RepositorySettings, TriggerType, WebhookDelivery
 from app.jobs.repository import JobRepository
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 SUPPORTED_PR_ACTIONS = {"opened", "reopened", "ready_for_review", "synchronize"}
 ACCOUNT_SCOPED_EVENTS = {
     "pull_request",
@@ -256,6 +258,19 @@ async def github_webhook(
             trigger_type=trigger,
             source_comment_id=source_comment_id,
         )
+        if created and job is not None:
+            try:
+                if trigger == TriggerType.AUTO:
+                    await github.add_pull_request_eyes_reaction(
+                        installation_id, owner, repository_name, pr_number
+                    )
+                else:
+                    assert source_comment_id is not None
+                    await github.add_comment_eyes_reaction(
+                        installation_id, owner, repository_name, source_comment_id
+                    )
+            except Exception:
+                logger.warning("Unable to add the review-start reaction for job %s", job.id)
         return {"accepted": True, "created": created, "job_id": job.id if job else None}
     except (ValidationError, json.JSONDecodeError, KeyError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid webhook payload") from exc

@@ -17,6 +17,68 @@ class CodexError(RuntimeError):
         self.retryable = retryable
 
 
+def _error_text(stdout: bytes, stderr: bytes) -> str:
+    """Extract only classifier input; never persist or expose process output."""
+    parts = [stdout.decode(errors="replace"), stderr.decode(errors="replace")]
+    for payload in list(parts):
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(decoded, dict):
+            parts.extend(str(value) for value in decoded.values() if isinstance(value, str))
+    return "\n".join(parts).casefold()
+
+
+def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> CodexError:
+    """Classify known Codex CLI failures without retaining untrusted diagnostics."""
+    text = _error_text(stdout, stderr)
+    if any(
+        value in text for value in ("rate limit", "too many requests", "http 429", "status 429")
+    ):
+        return CodexError("CODEX_RATE_LIMIT", "Codex request was rate limited")
+    if any(
+        value in text
+        for value in (
+            "usage limit",
+            "usage quota",
+            "quota exceeded",
+            "plan limit",
+            "monthly limit",
+            "credit balance",
+        )
+    ):
+        return CodexError("CODEX_QUOTA", "Codex usage limit was reached")
+    if any(
+        value in text
+        for value in (
+            "not logged in",
+            "login required",
+            "authentication",
+            "unauthorized",
+            "session expired",
+            "invalid api key",
+        )
+    ):
+        return CodexError("CODEX_AUTH", "Codex CLI is not authenticated")
+    if any(
+        value in text
+        for value in (
+            "service unavailable",
+            "temporarily unavailable",
+            "internal server error",
+            "http 502",
+            "http 503",
+            "http 504",
+            "connection reset",
+        )
+    ):
+        return CodexError(
+            "CODEX_SERVICE_UNAVAILABLE", "Codex service is temporarily unavailable", True
+        )
+    return CodexError("CODEX_FAILED", f"Codex CLI exited unsuccessfully ({returncode})", True)
+
+
 class ReviewRunner(Protocol):
     async def run(self, checkout: Path, prompt: str) -> ReviewOutput: ...
 
@@ -99,11 +161,7 @@ class CodexRunner:
         if len(stdout) > MAX_PROCESS_OUTPUT or len(stderr) > MAX_PROCESS_OUTPUT:
             raise CodexError("CODEX_OUTPUT_LIMIT", "Codex output exceeded the safe limit")
         if process.returncode != 0:
-            message = stderr.decode(errors="replace")[-1000:]
-            lowered = message.lower()
-            if "login" in lowered or "authentication" in lowered:
-                raise CodexError("CODEX_AUTH", "Codex CLI is not authenticated")
-            raise CodexError("CODEX_FAILED", "Codex CLI exited unsuccessfully", retryable=True)
+            raise classify_codex_failure(process.returncode or 1, stdout, stderr)
         try:
             return ReviewOutput.model_validate(json.loads(stdout))
         except (json.JSONDecodeError, ValueError) as exc:

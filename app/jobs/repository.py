@@ -4,7 +4,7 @@ from sqlalchemy import Select, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.jobs.models import JobStatus, ReviewJob, TriggerType
+from app.jobs.models import JobStatus, ReviewFailureNotice, ReviewJob, TriggerType
 
 
 def claim_statement() -> Select[tuple[ReviewJob]]:
@@ -114,3 +114,43 @@ class JobRepository:
         job.error_message = None
         await self.session.commit()
         return True
+
+    async def get_or_create_failure_notice(
+        self, job: ReviewJob, error_category: str
+    ) -> ReviewFailureNotice:
+        notice = await self.session.scalar(
+            select(ReviewFailureNotice).where(
+                ReviewFailureNotice.repository_owner == job.repository_owner,
+                ReviewFailureNotice.repository_name == job.repository_name,
+                ReviewFailureNotice.pull_request_number == job.pull_request_number,
+                ReviewFailureNotice.head_sha == job.head_sha,
+                ReviewFailureNotice.error_category == error_category,
+            )
+        )
+        if notice is not None:
+            return notice
+        notice = ReviewFailureNotice(
+            repository_owner=job.repository_owner,
+            repository_name=job.repository_name,
+            pull_request_number=job.pull_request_number,
+            head_sha=job.head_sha,
+            error_category=error_category,
+        )
+        self.session.add(notice)
+        try:
+            await self.session.commit()
+            await self.session.refresh(notice)
+            return notice
+        except IntegrityError:
+            await self.session.rollback()
+            existing = await self.session.scalar(
+                select(ReviewFailureNotice).where(
+                    ReviewFailureNotice.repository_owner == job.repository_owner,
+                    ReviewFailureNotice.repository_name == job.repository_name,
+                    ReviewFailureNotice.pull_request_number == job.pull_request_number,
+                    ReviewFailureNotice.head_sha == job.head_sha,
+                    ReviewFailureNotice.error_category == error_category,
+                )
+            )
+            assert existing is not None
+            return existing

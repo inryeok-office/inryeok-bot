@@ -78,8 +78,35 @@ async def test_pull_request_actions(app_client, pr_payload, action):
 
 
 @pytest.mark.asyncio
+async def test_auto_review_job_adds_eyes_reaction_to_pull_request(app_client, pr_payload):
+    client, _ = app_client
+    github = FakeGitHub()
+    app.dependency_overrides[get_github] = lambda: github
+    body, headers = signed(pr_payload, delivery="auto-reaction")
+    assert (await client.post("/webhooks/github", content=body, headers=headers)).json()["created"]
+    assert github.reactions == [("pull_request", 7)]
+
+
+@pytest.mark.asyncio
+async def test_reaction_failure_does_not_prevent_job_creation(app_client, pr_payload):
+    client, factory = app_client
+
+    class FailingReactionGitHub(FakeGitHub):
+        async def add_pull_request_eyes_reaction(self, *_: object) -> bool:
+            raise RuntimeError("reaction denied")
+
+    app.dependency_overrides[get_github] = lambda: FailingReactionGitHub()
+    body, headers = signed(pr_payload, delivery="reaction-failure")
+    assert (await client.post("/webhooks/github", content=body, headers=headers)).json()["created"]
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 1
+
+
+@pytest.mark.asyncio
 async def test_pr_comment_command(app_client):
     client, _ = app_client
+    github = FakeGitHub()
+    app.dependency_overrides[get_github] = lambda: github
     payload = {
         "action": "created",
         "installation": {"id": 1},
@@ -92,6 +119,7 @@ async def test_pr_comment_command(app_client):
     assert (await client.post("/webhooks/github", content=body, headers=headers)).json()[
         "created"
     ] is True
+    assert github.reactions == [("comment", 101)]
 
 
 @pytest.mark.asyncio

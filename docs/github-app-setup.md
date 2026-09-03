@@ -28,8 +28,7 @@ GitHub의 계정 제한과 별도로 서버의 `ALLOWED_GITHUB_ACCOUNTS`에도
 - Contents: Read-only
 - Metadata: Read-only
 - Pull requests: Read & write
-- Issues: Read-only
-- Checks: Read and write
+- Issues: Read and write (review-start reactions and failure notices)
 
 ## Webhook events
 
