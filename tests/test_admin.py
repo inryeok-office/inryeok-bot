@@ -65,6 +65,8 @@ async def test_production_admin_bypass_is_blocked(app_client) -> None:
         github_bot_login="test-bot[bot]",
         allowed_github_accounts="inryeok-office",
         admin_local_bypass=True,
+        admin_github_client_id="",
+        admin_github_client_secret="",
     )
     assert (await client.get("/admin")).status_code == 503
 
@@ -87,6 +89,7 @@ def test_production_rejects_empty_account_allowlist() -> None:
             public_base_url="https://review.example.test",
             admin_session_secret="x" * 32,
             github_bot_login="test-bot[bot]",
+            allowed_github_accounts="",
         )
 
 
