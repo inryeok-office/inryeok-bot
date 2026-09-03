@@ -246,6 +246,30 @@ async def test_same_comment_id_with_new_delivery_is_not_reprocessed(app_client):
 
 
 @pytest.mark.asyncio
+async def test_distinct_manual_commands_can_review_the_same_head(app_client):
+    client, factory = app_client
+    payload = {
+        "action": "created",
+        "installation": {"id": 1},
+        "repository": {"name": "repo", "owner": {"login": "acme"}},
+        "sender": {"login": "alice"},
+        "issue": {"number": 8, "pull_request": {"url": "x"}},
+        "comment": {"id": 801, "body": "/review", "user": {"login": "alice"}},
+    }
+    body, headers = signed(payload, "issue_comment", "manual-command-1")
+    assert (await client.post("/webhooks/github", content=body, headers=headers)).json()[
+        "created"
+    ] is True
+    payload["comment"]["id"] = 802
+    body, headers = signed(payload, "issue_comment", "manual-command-2")
+    assert (await client.post("/webhooks/github", content=body, headers=headers)).json()[
+        "created"
+    ] is True
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 2
+
+
+@pytest.mark.asyncio
 async def test_read_permission_command_is_ignored(app_client):
     client, _ = app_client
 

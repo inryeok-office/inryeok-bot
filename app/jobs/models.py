@@ -9,11 +9,13 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,13 +41,16 @@ class ReviewJob(Base):
     __table_args__ = (
         UniqueConstraint("delivery_id"),
         UniqueConstraint("source_comment_id", name="uq_review_jobs_source_comment_id"),
-        UniqueConstraint(
+        Index(
+            "uq_review_policy_non_command",
             "repository_owner",
             "repository_name",
             "pull_request_number",
             "head_sha",
             "trigger_type",
-            name="uq_review_policy",
+            unique=True,
+            postgresql_where=text("trigger_type <> 'COMMAND'"),
+            sqlite_where=text("trigger_type <> 'COMMAND'"),
         ),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
