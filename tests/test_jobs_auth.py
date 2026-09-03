@@ -4,11 +4,13 @@ import httpx
 import pytest
 import respx
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
 from app.github.auth import InstallationTokenProvider
 from app.jobs.models import JobStatus, ReviewJob, TriggerType
 from app.jobs.repository import JobRepository, claim_statement
+from app.jobs.worker import finish_after_error
 
 
 def test_claim_uses_postgres_skip_locked():
@@ -55,6 +57,44 @@ async def test_claim_order_and_stale_recovery(app_client):
         assert await JobRepository(session).recover_stale(60, 3) == 1
         await session.refresh(first)
         assert first.status == JobStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_error_finish_rolls_back_failed_transaction(app_client):
+    _, factory = app_client
+    async with factory() as session:
+        job = ReviewJob(
+            delivery_id="rollback-target",
+            installation_id=1,
+            repository_owner="o",
+            repository_name="r",
+            pull_request_number=1,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.AUTO,
+        )
+        session.add(job)
+        await session.commit()
+        session.add(
+            ReviewJob(
+                delivery_id="rollback-target",
+                installation_id=1,
+                repository_owner="o",
+                repository_name="r",
+                pull_request_number=2,
+                base_sha="a" * 40,
+                head_sha="c" * 40,
+                trigger_type=TriggerType.AUTO,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await session.flush()
+        await finish_after_error(
+            session, JobRepository(session), job, JobStatus.FAILED, "UNEXPECTED", "database error"
+        )
+        await session.refresh(job)
+        assert job.status == JobStatus.FAILED
+        assert job.error_code == "UNEXPECTED"
 
 
 @respx.mock
