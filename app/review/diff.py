@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import fnmatch
 import os
 import re
@@ -12,6 +13,11 @@ from app.config import Settings
 
 class DiffError(RuntimeError):
     pass
+
+
+def _git_authorization_header(token: str) -> str:
+    credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode("ascii")
+    return f"AUTHORIZATION: basic {credentials}"
 
 
 def normalize_path(value: str) -> str:
@@ -148,7 +154,7 @@ class RepositoryCheckout:
             {
                 "GIT_CONFIG_COUNT": "1",
                 "GIT_CONFIG_KEY_0": (f"http.{self.settings.github_clone_base_url}/.extraheader"),
-                "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: bearer {self.token}",
+                "GIT_CONFIG_VALUE_0": _git_authorization_header(self.token),
                 "GIT_TERMINAL_PROMPT": "0",
                 "GIT_CONFIG_GLOBAL": os.devnull,
                 "GIT_CONFIG_SYSTEM": os.devnull,

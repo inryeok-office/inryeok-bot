@@ -1,6 +1,14 @@
+import base64
+
 import pytest
 
-from app.review.diff import ignored, normalize_path, parse_unified_diff
+from app.review.diff import _git_authorization_header, ignored, normalize_path, parse_unified_diff
+
+
+def test_git_authorization_header_uses_github_app_basic_auth() -> None:
+    credential = "example-installation-credential"
+    expected = base64.b64encode(f"x-access-token:{credential}".encode()).decode("ascii")
+    assert _git_authorization_header(credential) == f"AUTHORIZATION: basic {expected}"
 
 
 def test_added_lines_rename_and_deletions():
