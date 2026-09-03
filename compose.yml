@@ -3,6 +3,10 @@ x-logging: &default-logging
   options: {max-size: "10m", max-file: "3"}
 x-app-runtime: &app-runtime
   image: inryeok-bot:0.1.0
+  secrets:
+    - source: github_app_private_key
+      target: github-app.pem
+      mode: "0444"
   env_file:
     - path: .env.example
     - path: .env
@@ -88,3 +92,7 @@ volumes:
   review-work:
   caddy-data:
   caddy-config:
+
+secrets:
+  github_app_private_key:
+    file: "${GITHUB_PRIVATE_KEY_HOST_PATH}"

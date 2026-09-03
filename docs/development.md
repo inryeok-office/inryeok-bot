@@ -29,6 +29,21 @@ cloudflared tunnel --url http://localhost:8000
 
 Quick Tunnel URL은 바뀔 수 있으므로 GitHub App의 Webhook, Callback, Setup URL도 함께 갱신해야 합니다.
 
+## Windows Docker Desktop의 GitHub App Private Key
+
+PEM 파일을 저장소나 `.env`에 넣지 않습니다. Windows Docker Desktop에서는 실제
+PEM의 호스트 경로만 `.env`에 지정하고 Compose secret이 컨테이너 안의 읽기 전용
+경로로 연결합니다.
+
+```dotenv
+GITHUB_PRIVATE_KEY_HOST_PATH=C:/Users/user/.inryeok-bot/github-app.pem
+GITHUB_PRIVATE_KEY_PATH=/run/secrets/github-app.pem
+```
+
+첫 경로는 문서 예시일 뿐이며, 실제 사용자 경로는 각자의 `.env`에서 설정합니다.
+`github_app_private_key` secret은 web과 worker에만 `/run/secrets/github-app.pem`으로
+마운트됩니다.
+
 ## 검증
 
 ```bash

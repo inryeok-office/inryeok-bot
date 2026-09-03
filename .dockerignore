@@ -14,9 +14,9 @@
 *.pem
 *.key
 auth.json
+secrets
 *.log
 postgres-data
 work
 checkouts
 tests
-
