@@ -5,18 +5,20 @@ from app.codex.schemas import Finding
 
 
 def build_review_payload(
-    findings: list[Finding], reviewed_file_count: int, head_sha: str, rerun: bool
+    findings: list[Finding], reviewed_file_count: int, head_sha: str, rerun: bool | None = None
 ) -> dict[str, Any]:
     counts = Counter(item.severity.value for item in findings)
-    severity = ", ".join(
-        f"{name}: {counts.get(name, 0)}" for name in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
-    )
-    rerun_text = "yes" if rerun else "no"
     body = (
-        f"Codex review: {reviewed_file_count} files, {len(findings)} findings "
-        f"({severity}). Head `{head_sha[:12]}`. Rerun: {rerun_text}."
-        "\n\n<!-- github-codex-review:v1 -->"
+        f"Inryeok Bot reviewed {reviewed_file_count} files\n\n"
+        f"{len(findings)} findings\n"
+        f"- Critical: {counts.get('CRITICAL', 0)}\n"
+        f"- High: {counts.get('HIGH', 0)}\n"
+        f"- Medium: {counts.get('MEDIUM', 0)}\n"
+        f"- Low: {counts.get('LOW', 0)}\n\n"
+        f"Head: `{head_sha[:12]}`\n\n"
+        "<!-- inryeok-review:v1 -->"
     )
+    icons = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵"}
     return {
         "commit_id": head_sha,
         "event": "COMMENT",
@@ -27,8 +29,8 @@ def build_review_payload(
                 "line": item.line,
                 "side": "RIGHT",
                 "body": (
-                    f"**{item.severity.value}: {item.title}**\n\n{item.body}"
-                    f"\n\nConfidence: {item.confidence:.0%}"
+                    f"{icons[item.severity.value]} {item.severity.value} · {item.title}"
+                    f"\n\n{item.body}"
                 ),
             }
             for item in findings

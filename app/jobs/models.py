@@ -67,6 +67,7 @@ class ReviewJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    github_check_run_id: Mapped[int | None] = mapped_column(BigInteger)
     runs: Mapped[list["ReviewRun"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
@@ -123,6 +124,7 @@ class FindingRecord(Base):
     path: Mapped[str] = mapped_column(String(1024))
     line: Mapped[int]
     severity: Mapped[str] = mapped_column(String(16))
+    category: Mapped[str] = mapped_column(String(32))
     confidence: Mapped[float]
     title: Mapped[str] = mapped_column(String(300))
     fingerprint: Mapped[str] = mapped_column(String(64))

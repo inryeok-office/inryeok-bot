@@ -1,5 +1,5 @@
 from app.admin.auth import AdminAuthAdapter
-from app.codex.schemas import Finding, Severity
+from app.codex.schemas import Category, Finding, Severity
 from app.config import Settings
 from app.github.schemas import is_review_command
 from app.logging import redact
@@ -23,6 +23,7 @@ def test_review_payload():
     finding = Finding(
         path="a.py",
         line=4,
+        category=Category.SECURITY,
         severity=Severity.CRITICAL,
         confidence=0.99,
         title="Injection",
@@ -31,7 +32,10 @@ def test_review_payload():
     payload = build_review_payload([finding], 3, "a" * 40, False)
     assert payload["event"] == "COMMENT"
     assert payload["comments"][0]["side"] == "RIGHT"
-    assert "CRITICAL" in payload["body"]
+    assert "Critical: 1" in payload["body"]
+    assert "High: 0" in payload["body"] and "Medium: 0" in payload["body"]
+    assert "Head: `aaaaaaaaaaaa`" in payload["body"]
+    assert payload["comments"][0]["body"].startswith("🔴 CRITICAL · Injection")
 
 
 def test_secret_redaction():
@@ -45,6 +49,7 @@ def test_production_bypass_never_enabled():
         public_base_url="https://review.example.test",
         admin_session_secret="x" * 32,
         github_bot_login="test-bot[bot]",
+        allowed_github_accounts="inryeok-office",
         admin_local_bypass=True,
     )
     assert settings.admin_bypass_enabled is False

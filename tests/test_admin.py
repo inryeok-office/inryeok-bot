@@ -26,6 +26,7 @@ def oauth_settings() -> Settings:
         admin_github_client_id="client-id",
         admin_github_client_secret="client-secret",
         admin_session_secret="s" * 32,
+        allowed_github_accounts="acme",
     )
 
 
@@ -62,6 +63,7 @@ async def test_production_admin_bypass_is_blocked(app_client) -> None:
         public_base_url="https://review.example.test",
         admin_session_secret="x" * 32,
         github_bot_login="test-bot[bot]",
+        allowed_github_accounts="inryeok-office",
         admin_local_bypass=True,
     )
     assert (await client.get("/admin")).status_code == 503
@@ -74,7 +76,27 @@ def test_production_requires_https_public_base_url() -> None:
             public_base_url="http://review.example.test",
             admin_session_secret="x" * 32,
             github_bot_login="test-bot[bot]",
+            allowed_github_accounts="inryeok-office",
         )
+
+
+def test_production_rejects_empty_account_allowlist() -> None:
+    with pytest.raises(ValidationError, match="ALLOWED_GITHUB_ACCOUNTS"):
+        Settings(
+            environment="production",
+            public_base_url="https://review.example.test",
+            admin_session_secret="x" * 32,
+            github_bot_login="test-bot[bot]",
+        )
+
+
+def test_unlisted_accounts_can_only_be_enabled_explicitly_in_development() -> None:
+    development = Settings(
+        environment="development",
+        allow_unlisted_github_accounts=True,
+    )
+    assert development.github_account_allowed("any-account")
+    assert not Settings(environment="test").github_account_allowed("any-account")
 
 
 def test_admin_redirect_stays_local() -> None:
@@ -174,3 +196,32 @@ async def test_oauth_callback_creates_server_side_session(app_client) -> None:
         records = list((await session.execute(select(AdminSession))).scalars())
         assert len(records) == 1
         assert "user-secret-token" not in records[0].encrypted_access_token
+
+
+@pytest.mark.asyncio
+async def test_admin_lists_only_allowed_accounts(app_client) -> None:
+    client, factory = app_client
+    settings = Settings(
+        environment="development",
+        admin_local_bypass=True,
+        allowed_github_accounts="Acme",
+    )
+    app.dependency_overrides[get_settings] = lambda: settings
+    async with factory() as session:
+        session.add_all(
+            [
+                RepositorySettings(
+                    installation_id=20, repository_owner="acme", repository_name="visible"
+                ),
+                RepositorySettings(
+                    installation_id=21,
+                    repository_owner="outside-org",
+                    repository_name="hidden",
+                ),
+            ]
+        )
+        await session.commit()
+    response = await client.get("/admin/repositories")
+    assert response.status_code == 200
+    assert "acme/visible" in response.text
+    assert "outside-org/hidden" not in response.text

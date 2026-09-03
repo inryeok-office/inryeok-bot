@@ -5,7 +5,7 @@ import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.auth import AdminPrincipal, csrf_token, require_admin, verify_csrf
@@ -16,6 +16,17 @@ from app.jobs.repository import JobRepository
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+
+
+def _account_filter(column: Any, settings: Settings) -> Any:
+    if settings.environment == "development" and settings.allow_unlisted_github_accounts:
+        return True
+    return func.lower(column).in_(settings.allowed_github_account_set)
+
+
+def _ensure_allowed(repository_owner: str, settings: Settings) -> None:
+    if not settings.github_account_allowed(repository_owner):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "repository not found")
 
 
 def _context(
@@ -63,13 +74,18 @@ async def index(
     principal: AdminPrincipal = Depends(require_admin),
 ) -> HTMLResponse:
     jobs = (
-        await session.scalars(select(ReviewJob).order_by(ReviewJob.created_at.desc()).limit(20))
+        await session.scalars(
+            select(ReviewJob)
+            .where(_account_filter(ReviewJob.repository_owner, settings))
+            .order_by(ReviewJob.created_at.desc())
+            .limit(20)
+        )
     ).all()
     repositories = (
         await session.scalars(
-            select(RepositorySettings).order_by(
-                RepositorySettings.repository_owner, RepositorySettings.repository_name
-            )
+            select(RepositorySettings)
+            .order_by(RepositorySettings.repository_owner, RepositorySettings.repository_name)
+            .where(_account_filter(RepositorySettings.repository_owner, settings))
         )
     ).all()
     return templates.TemplateResponse(
@@ -87,7 +103,12 @@ async def jobs(
     principal: AdminPrincipal = Depends(require_admin),
 ) -> HTMLResponse:
     values = (
-        await session.scalars(select(ReviewJob).order_by(ReviewJob.created_at.desc()).limit(100))
+        await session.scalars(
+            select(ReviewJob)
+            .where(_account_filter(ReviewJob.repository_owner, settings))
+            .order_by(ReviewJob.created_at.desc())
+            .limit(100)
+        )
     ).all()
     return templates.TemplateResponse(
         request, "jobs.html", _context(request, principal, settings, jobs=values)
@@ -105,6 +126,7 @@ async def job_detail(
     job = await session.get(ReviewJob, job_id)
     if not job:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+    _ensure_allowed(job.repository_owner, settings)
     return templates.TemplateResponse(
         request, "job_detail.html", _context(request, principal, settings, job=job)
     )
@@ -119,9 +141,9 @@ async def repositories(
 ) -> HTMLResponse:
     values = (
         await session.scalars(
-            select(RepositorySettings).order_by(
-                RepositorySettings.repository_owner, RepositorySettings.repository_name
-            )
+            select(RepositorySettings)
+            .order_by(RepositorySettings.repository_owner, RepositorySettings.repository_name)
+            .where(_account_filter(RepositorySettings.repository_owner, settings))
         )
     ).all()
     return templates.TemplateResponse(
@@ -142,6 +164,7 @@ async def repository_detail(
     repository = await session.get(RepositorySettings, repository_id)
     if not repository:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "repository not found")
+    _ensure_allowed(repository.repository_owner, settings)
     return templates.TemplateResponse(
         request,
         "repository_detail.html",
@@ -169,6 +192,7 @@ async def update_repository(
     repository = await session.get(RepositorySettings, repository_id)
     if not repository:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "repository not found")
+    _ensure_allowed(repository.repository_owner, settings)
     await _require_repository_admin(repository, principal, settings)
     repository.enabled = enabled
     repository.auto_review = auto_review
@@ -193,6 +217,7 @@ async def retry_job(
     job = await session.get(ReviewJob, job_id)
     if not job:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+    _ensure_allowed(job.repository_owner, settings)
     repository = await session.scalar(
         select(RepositorySettings).where(
             RepositorySettings.installation_id == job.installation_id,

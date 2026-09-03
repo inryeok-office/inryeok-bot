@@ -20,6 +20,27 @@ async def test_valid_signature_enqueues_and_duplicate_is_idempotent(app_client, 
 
 
 @pytest.mark.asyncio
+async def test_allowed_account_comparison_is_case_insensitive(app_client, pr_payload):
+    client, _ = app_client
+    pr_payload["repository"]["owner"]["login"] = "AcMe"
+    body, headers = signed(pr_payload, delivery="allowed-case")
+    response = await client.post("/webhooks/github", content=body, headers=headers)
+    assert response.json()["created"] is True
+
+
+@pytest.mark.asyncio
+async def test_unlisted_account_is_rejected_without_job(app_client, pr_payload):
+    client, factory = app_client
+    pr_payload["repository"]["owner"]["login"] = "outside-org"
+    pr_payload["installation"]["account"]["login"] = "outside-org"
+    body, headers = signed(pr_payload, delivery="outside-account")
+    response = await client.post("/webhooks/github", content=body, headers=headers)
+    assert response.json()["ignored"] == "account_not_allowed"
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 0
+
+
+@pytest.mark.asyncio
 async def test_invalid_signature_rejected(app_client, pr_payload):
     client, _ = app_client
     body, headers = signed(pr_payload)
@@ -78,7 +99,7 @@ async def test_installation_repository_sync(app_client):
     client, _ = app_client
     payload = {
         "action": "added",
-        "installation": {"id": 3},
+        "installation": {"id": 3, "account": {"login": "ACME"}},
         "repositories_added": [{"full_name": "acme/new-repo"}],
         "repositories_removed": [],
     }
@@ -89,10 +110,34 @@ async def test_installation_repository_sync(app_client):
 
 
 @pytest.mark.asyncio
+async def test_unlisted_installation_is_not_synchronized(app_client):
+    client, factory = app_client
+
+    class TrackingGitHub(FakeGitHub):
+        called = False
+
+        async def list_installation_repositories(self, *_: object) -> list[dict[str, object]]:
+            type(self).called = True
+            return [{"full_name": "outside-org/repo"}]
+
+    app.dependency_overrides[get_github] = lambda: TrackingGitHub()
+    payload = {
+        "action": "created",
+        "installation": {"id": 30, "account": {"login": "outside-org"}},
+    }
+    body, headers = signed(payload, "installation", "outside-installation")
+    response = await client.post("/webhooks/github", content=body, headers=headers)
+    assert response.json()["ignored"] == "account_not_allowed"
+    assert not TrackingGitHub.called
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(RepositorySettings)) == 0
+
+
+@pytest.mark.asyncio
 async def test_installation_created_syncs_default_settings(app_client):
     client, factory = app_client
     body, headers = signed(
-        {"action": "created", "installation": {"id": 8}},
+        {"action": "created", "installation": {"id": 8, "account": {"login": "acme"}}},
         "installation",
         "install-created",
     )
@@ -114,13 +159,13 @@ async def test_installation_created_syncs_default_settings(app_client):
 async def test_installation_deleted_disables_without_deleting(app_client):
     client, factory = app_client
     body, headers = signed(
-        {"action": "created", "installation": {"id": 9}},
+        {"action": "created", "installation": {"id": 9, "account": {"login": "acme"}}},
         "installation",
         "install-created-9",
     )
     await client.post("/webhooks/github", content=body, headers=headers)
     body, headers = signed(
-        {"action": "deleted", "installation": {"id": 9}},
+        {"action": "deleted", "installation": {"id": 9, "account": {"login": "acme"}}},
         "installation",
         "install-deleted-9",
     )
@@ -141,7 +186,9 @@ async def test_installation_suspend_and_unsuspend(app_client):
         ("unsuspend", "lifecycle-unsuspend"),
     ):
         body, headers = signed(
-            {"action": action, "installation": {"id": 10}}, "installation", delivery
+            {"action": action, "installation": {"id": 10, "account": {"login": "acme"}}},
+            "installation",
+            delivery,
         )
         await client.post("/webhooks/github", content=body, headers=headers)
     async with factory() as session:
@@ -156,7 +203,7 @@ async def test_installation_repository_removed_is_disabled(app_client):
     client, factory = app_client
     added = {
         "action": "added",
-        "installation": {"id": 11},
+        "installation": {"id": 11, "account": {"login": "acme"}},
         "repositories_added": [{"full_name": "acme/removed"}],
         "repositories_removed": [],
     }
@@ -164,7 +211,7 @@ async def test_installation_repository_removed_is_disabled(app_client):
     await client.post("/webhooks/github", content=body, headers=headers)
     removed = {
         "action": "removed",
-        "installation": {"id": 11},
+        "installation": {"id": 11, "account": {"login": "acme"}},
         "repositories_added": [],
         "repositories_removed": [{"full_name": "acme/removed"}],
     }

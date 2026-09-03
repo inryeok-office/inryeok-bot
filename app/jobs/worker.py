@@ -12,7 +12,7 @@ from app.jobs.models import JobStatus
 from app.jobs.repository import JobRepository
 from app.logging import configure_logging, redact
 from app.review.diff import DiffError
-from app.review.service import ReviewService
+from app.review.service import ReviewService, ReviewSkipped
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,8 @@ async def run_worker() -> None:
                 github = GitHubClient(settings)
                 await ReviewService(session, github, CodexRunner(settings)).execute(job)
                 await repository.finish(job, JobStatus.SUCCEEDED)
+            except ReviewSkipped as exc:
+                await repository.finish(job, JobStatus.SKIPPED, "SKIPPED", str(exc))
             except CodexError as exc:
                 if exc.retryable and job.attempts < settings.worker_max_attempts:
                     job.status = JobStatus.PENDING

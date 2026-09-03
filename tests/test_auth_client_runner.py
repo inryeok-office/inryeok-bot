@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from app.codex.runner import CodexRunner
 from app.config import Settings
 from app.github.auth import InstallationTokenProvider
+from app.github.client import GitHubClient
 
 
 @respx.mock
@@ -78,3 +79,31 @@ async def test_codex_runner_uses_read_only_structured_exec(monkeypatch, tmp_path
         "read-only" in captured and "--output-schema" in captured and "--ignore-rules" in captured
     )
     assert "GITHUB_WEBHOOK_SECRET" not in captured_env
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_check_run_is_created_in_progress_and_completed() -> None:
+    settings = Settings(environment="test", github_api_url="https://api.github.test")
+    async with httpx.AsyncClient() as http:
+        github = GitHubClient(settings, http)
+
+        class Tokens:
+            async def get(self, installation_id: int) -> str:
+                return "token"
+
+        github.tokens = Tokens()  # type: ignore[assignment]
+        created = respx.post("https://api.github.test/repos/acme/repo/check-runs").mock(
+            return_value=httpx.Response(201, json={"id": 55})
+        )
+        completed = respx.patch("https://api.github.test/repos/acme/repo/check-runs/55").mock(
+            return_value=httpx.Response(200, json={"id": 55})
+        )
+        await github.create_check_run(1, "acme", "repo", "a" * 40)
+        await github.complete_check_run(1, "acme", "repo", 55, "success", "Done", "No findings")
+
+    assert created.calls[0].request.content
+    assert json.loads(created.calls[0].request.content)["status"] == "in_progress"
+    completed_payload = json.loads(completed.calls[0].request.content)
+    assert completed_payload["status"] == "completed"
+    assert completed_payload["conclusion"] == "success"

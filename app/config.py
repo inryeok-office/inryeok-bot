@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     github_bot_login: str = ""
     github_app_display_name: str = "Codex Review Bot"
     github_api_url: str = "https://api.github.com"
+    allowed_github_accounts: str = ""
+    allow_unlisted_github_accounts: bool = False
     codex_home: Path | None = None
     codex_command: str = "codex"
     work_root: Path = Path("work")
@@ -51,6 +53,13 @@ class Settings(BaseSettings):
             return value.replace("\\n", "\n").replace(",", "\n")
         return value
 
+    @field_validator("allowed_github_accounts", mode="before")
+    @classmethod
+    def normalize_allowed_accounts(cls, value: object) -> object:
+        if isinstance(value, (list, tuple, set)):
+            return ",".join(str(item) for item in value)
+        return value
+
     @model_validator(mode="after")
     def validate_external_urls_and_secrets(self) -> "Settings":
         self.public_base_url = self.public_base_url.rstrip("/")
@@ -63,6 +72,10 @@ class Settings(BaseSettings):
                 raise ValueError("production ADMIN_SESSION_SECRET must be at least 32 characters")
             if not self.github_bot_login:
                 raise ValueError("production GITHUB_BOT_LOGIN is required")
+            if not self.allowed_github_account_set:
+                raise ValueError("production ALLOWED_GITHUB_ACCOUNTS must not be empty")
+            if self.allow_unlisted_github_accounts:
+                raise ValueError("ALLOW_UNLISTED_GITHUB_ACCOUNTS is only available in development")
         elif self.public_base_url and parsed.scheme not in {"http", "https"}:
             raise ValueError("PUBLIC_BASE_URL must use HTTP or HTTPS")
         return self
@@ -83,6 +96,19 @@ class Settings(BaseSettings):
     @property
     def admin_callback_url(self) -> str:
         return f"{self.public_base_url}/auth/github/callback"
+
+    @property
+    def allowed_github_account_set(self) -> frozenset[str]:
+        return frozenset(
+            value.strip().casefold()
+            for value in self.allowed_github_accounts.split(",")
+            if value.strip()
+        )
+
+    def github_account_allowed(self, account: str) -> bool:
+        if self.environment == "development" and self.allow_unlisted_github_accounts:
+            return True
+        return account.strip().casefold() in self.allowed_github_account_set
 
     @property
     def github_clone_base_url(self) -> str:

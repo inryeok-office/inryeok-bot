@@ -13,3 +13,5 @@ Worker는 PostgreSQL row locking과 `SKIP LOCKED`로 작업을 하나씩 claim�
 
 리뷰 결과는 변경 파일과 실제 RIGHT side 변경 라인, confidence, severity,
 repository 설정을 기준으로 검증한 뒤 하나의 GitHub Review로 게시합니다.
+Worker는 `Inryeok Review` Check Run을 `in_progress`로 만들고 결과에 따라
+`success`, `neutral`, `failure`, `skipped` 중 하나로 완료합니다.

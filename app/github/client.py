@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -126,6 +126,58 @@ class GitHubClient:
                     "POST",
                     f"/repos/{owner}/{repo}/pulls/{number}/reviews",
                     json=payload,
+                )
+            ).json()
+        )
+
+    async def create_check_run(
+        self,
+        installation_id: int,
+        owner: str,
+        repo: str,
+        head_sha: str,
+        status: Literal["queued", "in_progress"] = "in_progress",
+    ) -> dict[str, Any]:
+        return dict(
+            (
+                await self._request(
+                    installation_id,
+                    "POST",
+                    f"/repos/{owner}/{repo}/check-runs",
+                    json={
+                        "name": "Inryeok Review",
+                        "head_sha": head_sha,
+                        "status": status,
+                        "output": {
+                            "title": "Review in progress",
+                            "summary": "Inryeok Bot is reviewing this pull request.",
+                        },
+                    },
+                )
+            ).json()
+        )
+
+    async def complete_check_run(
+        self,
+        installation_id: int,
+        owner: str,
+        repo: str,
+        check_run_id: int,
+        conclusion: str,
+        title: str,
+        summary: str,
+    ) -> dict[str, Any]:
+        return dict(
+            (
+                await self._request(
+                    installation_id,
+                    "PATCH",
+                    f"/repos/{owner}/{repo}/check-runs/{check_run_id}",
+                    json={
+                        "status": "completed",
+                        "conclusion": conclusion,
+                        "output": {"title": title, "summary": summary},
+                    },
                 )
             ).json()
         )

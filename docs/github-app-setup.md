@@ -4,6 +4,16 @@
 치환합니다. App 이름은 GitHub에서 사용할 수 있는 고유한 이름을 선택하고,
 표시 이름과 bot login은 배포 환경에 설정합니다.
 
+이 App은 조직 내부 전용으로 생성합니다.
+
+- App owner: `inryeok-office`
+- Where can this GitHub App be installed?: `Only on this account`
+- 외부 사용자 설치: 허용하지 않음
+- GitHub Marketplace: 등록하지 않음
+
+GitHub의 계정 제한과 별도로 서버의 `ALLOWED_GITHUB_ACCOUNTS`에도
+`inryeok-office`를 설정합니다.
+
 | GitHub App 항목 | 입력값 |
 | --- | --- |
 | Homepage URL | `${PUBLIC_BASE_URL}/admin` |
@@ -19,6 +29,7 @@
 - Metadata: Read-only
 - Pull requests: Read & write
 - Issues: Read-only
+- Checks: Read and write
 
 ## Webhook events
 

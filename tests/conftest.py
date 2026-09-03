@@ -38,6 +38,7 @@ async def app_client(tmp_path):
         database_url="sqlite+aiosqlite://",
         github_webhook_secret="test-secret",
         github_bot_login="reviewbot[bot]",
+        allowed_github_accounts="acme",
     )
 
     async def session_override() -> AsyncIterator[AsyncSession]:
@@ -74,7 +75,7 @@ def signed(
 def pr_payload() -> dict[str, object]:
     return {
         "action": "opened",
-        "installation": {"id": 1},
+        "installation": {"id": 1, "account": {"login": "Acme"}},
         "repository": {"name": "repo", "owner": {"login": "acme"}},
         "sender": {"login": "alice"},
         "pull_request": {
