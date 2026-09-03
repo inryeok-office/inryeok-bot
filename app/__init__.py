@@ -1,0 +1,1 @@
+"""Inryeok review bot."""

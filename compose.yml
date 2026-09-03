@@ -1,0 +1,90 @@
+x-logging: &default-logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}
+x-app-runtime: &app-runtime
+  image: inryeok-bot:0.1.0
+  env_file:
+    - path: .env.example
+    - path: .env
+      required: false
+  restart: unless-stopped
+  logging: *default-logging
+  depends_on:
+    postgres: {condition: service_healthy}
+  deploy:
+    resources:
+      limits: {cpus: "1.0", memory: 1G}
+
+services:
+  web:
+    <<: *app-runtime
+    build:
+      context: .
+      args: {PYTHON_VERSION: "3.13.7", NODE_VERSION: "22.19.0", CODEX_CLI_VERSION: "0.151.0"}
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *app-runtime
+    command: ["python", "-m", "app.jobs.worker"]
+    volumes:
+      - codex-auth:/var/lib/codex
+      - review-work:/var/lib/review-bot/work
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib,sys;sys.exit(b'app.jobs.worker' not in pathlib.Path('/proc/1/cmdline').read_bytes())"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 2G}
+
+  postgres:
+    image: postgres:17.6-bookworm
+    environment:
+      POSTGRES_DB: reviewbot
+      POSTGRES_USER: reviewbot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reviewbot -d reviewbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits: {cpus: "0.75", memory: 768M}
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    environment: {DOMAIN: "${DOMAIN:-localhost}"}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "--no-check-certificate", "https://localhost/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 128M}
+
+volumes:
+  postgres-data:
+  codex-auth:
+  review-work:
+  caddy-data:
+  caddy-config:
