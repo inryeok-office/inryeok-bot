@@ -16,14 +16,11 @@ Administrators sign in with GitHub and must have repository admin permission.
 ## Database backup and restore
 
 Create a Git-ignored `backups` directory in the Compose project.
-Then run the following command.
-It uses container environment variables instead of a password on the command line.
+Then run `scripts/backup_postgres.ps1`.
+The script writes a partial file first and renames it only after `pg_dump` succeeds.
 
 ```powershell
-New-Item -ItemType Directory -Force backups | Out-Null
-$stamp = Get-Date -Format yyyyMMdd-HHmmss
-docker compose exec -T postgres sh -lc 'pg_dump -U reviewbot reviewbot' `
-  > "backups/inryeok-bot-$stamp.sql"
+./scripts/backup_postgres.ps1
 ```
 
 To restore, stop web and worker first.

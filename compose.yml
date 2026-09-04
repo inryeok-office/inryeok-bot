@@ -12,6 +12,9 @@ x-app-runtime: &app-runtime
     - path: .env
       required: false
   restart: unless-stopped
+  init: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
   logging: *default-logging
   depends_on:
     postgres: {condition: service_healthy}
@@ -61,6 +64,9 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    init: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
     logging: *default-logging
     deploy:
       resources:
@@ -82,6 +88,9 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    init: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
     logging: *default-logging
     deploy:
       resources:

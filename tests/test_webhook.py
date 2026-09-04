@@ -49,6 +49,22 @@ async def test_invalid_signature_rejected(app_client, pr_payload):
 
 
 @pytest.mark.asyncio
+async def test_webhook_content_length_limit(app_client, pr_payload):
+    client, _ = app_client
+    body, headers = signed(pr_payload, delivery="oversized")
+    headers["content-length"] = "2000001"
+    assert (await client.post("/webhooks/github", content=body, headers=headers)).status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_compressed_webhook_is_rejected(app_client, pr_payload):
+    client, _ = app_client
+    body, headers = signed(pr_payload, delivery="compressed")
+    headers["content-encoding"] = "gzip"
+    assert (await client.post("/webhooks/github", content=body, headers=headers)).status_code == 415
+
+
+@pytest.mark.asyncio
 async def test_unsupported_event_ignored(app_client):
     client, _ = app_client
     body, headers = signed({}, "push")

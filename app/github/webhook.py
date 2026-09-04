@@ -122,7 +122,25 @@ async def github_webhook(
     settings: Settings = Depends(get_settings),
     github: GitHubClient = Depends(get_github),
 ) -> dict[str, object]:
-    body = await request.body()
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > settings.max_webhook_body_bytes:
+                raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "webhook body too large")
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid content length") from exc
+    if request.headers.get("content-encoding", "identity").casefold() not in {"", "identity"}:
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "compressed webhooks are not supported"
+        )
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > settings.max_webhook_body_bytes:
+            raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "webhook body too large")
+        chunks.append(chunk)
+    body = b"".join(chunks)
     if not verify_signature(
         body, x_hub_signature_256, settings.github_webhook_secret.get_secret_value()
     ):

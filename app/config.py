@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     max_changed_files: int = Field(200, ge=1, le=1000)
     max_file_bytes: int = Field(1_000_000, ge=1024)
     max_diff_bytes: int = Field(5_000_000, ge=1024)
+    max_webhook_body_bytes: int = Field(2_000_000, ge=16_384, le=20_000_000)
+    min_work_free_bytes: int = Field(100_000_000, ge=1_000_000, le=100_000_000_000)
     default_min_confidence: float = Field(0.9, ge=0, le=1)
     default_max_findings: int = Field(10, ge=1, le=50)
     default_include_low_severity: bool = False

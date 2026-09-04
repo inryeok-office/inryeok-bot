@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -8,10 +9,19 @@ from app.github.auth import InstallationTokenProvider
 
 
 class GitHubAPIError(RuntimeError):
-    def __init__(self, status_code: int) -> None:
+    def __init__(self, status_code: int, category: str = "GITHUB_API_ERROR") -> None:
         super().__init__(f"GitHub API request failed ({status_code})")
         self.status_code = status_code
+        self.category = category
         self.retryable = status_code == 429 or status_code >= 500
+
+
+def _retry_delay(response: httpx.Response, attempt: int) -> float:
+    retry_after = response.headers.get("Retry-After", "")
+    try:
+        return min(30.0, max(0.0, float(retry_after)))
+    except ValueError:
+        return min(30.0, float(2**attempt) + 0.1)
 
 
 class GitHubClient:
@@ -23,18 +33,46 @@ class GitHubClient:
     async def _request(
         self, installation_id: int, method: str, path: str, **kwargs: Any
     ) -> httpx.Response:
-        token = await self.tokens.get(installation_id)
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        response = await self.http.request(
-            method, f"{self.settings.github_api_url}{path}", headers=headers, **kwargs
-        )
-        if response.status_code >= 400:
-            raise GitHubAPIError(response.status_code)
-        return response
+        refreshed = False
+        for attempt in range(3):
+            token = await self.tokens.get(installation_id)
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            try:
+                response = await self.http.request(
+                    method, f"{self.settings.github_api_url}{path}", headers=headers, **kwargs
+                )
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                if attempt >= 2:
+                    raise GitHubAPIError(599, "GITHUB_NETWORK_ERROR") from exc
+                await asyncio.sleep(min(30.0, float(2**attempt) + 0.1))
+                continue
+            if response.status_code < 400:
+                return response
+            if response.status_code == 401 and not refreshed:
+                self.tokens.invalidate(installation_id)
+                refreshed = True
+                continue
+            rate_limited = response.status_code == 403 and (
+                response.headers.get("X-RateLimit-Remaining") == "0"
+                or "Retry-After" in response.headers
+            )
+            retryable = response.status_code == 429 or response.status_code >= 500 or rate_limited
+            if retryable and attempt < 2:
+                await asyncio.sleep(_retry_delay(response, attempt))
+                continue
+            category = (
+                "GITHUB_RATE_LIMIT"
+                if rate_limited or response.status_code == 429
+                else "GITHUB_API_ERROR"
+            )
+            error = GitHubAPIError(response.status_code, category)
+            error.retryable = retryable
+            raise error
+        raise GitHubAPIError(599, "GITHUB_RETRY_EXHAUSTED")
 
     async def get_pull_request(
         self, installation_id: int, owner: str, repo: str, number: int

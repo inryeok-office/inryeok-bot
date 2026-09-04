@@ -70,3 +70,6 @@ class InstallationTokenProvider:
         # GitHub tokens normally last one hour; parsing ISO is unnecessary for safe early refresh.
         self._tokens[installation_id] = CachedToken(token, time.time() + 3300)
         return token
+
+    def invalidate(self, installation_id: int) -> None:
+        self._tokens.pop(installation_id, None)

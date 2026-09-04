@@ -2,14 +2,53 @@ import asyncio
 import json
 import os
 import re
+import signal
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.codex.schemas import ReviewOutput
 from app.config import Settings
 
 MAX_PROCESS_OUTPUT = 2_000_000
+
+
+def _process_group_options() -> dict[str, Any]:
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    return {"start_new_session": True}
+
+
+async def _stop_process_group(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    if os.name == "nt":
+        process.terminate()
+    else:
+        killpg = getattr(os, "killpg", None)
+        try:
+            if callable(killpg):
+                killpg(process.pid, getattr(signal, "SIGTERM", 15))
+            else:
+                process.terminate()
+        except (ProcessLookupError, PermissionError):
+            process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=5)
+    except TimeoutError:
+        if os.name != "nt":
+            try:
+                killpg = getattr(os, "killpg", None)
+                if callable(killpg):
+                    killpg(process.pid, getattr(signal, "SIGKILL", 9))
+                else:
+                    process.kill()
+            except (ProcessLookupError, PermissionError):
+                process.kill()
+        else:
+            process.kill()
+        await process.wait()
 
 
 class CodexError(RuntimeError):
@@ -182,6 +221,7 @@ class CodexRunner:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    **_process_group_options(),
                 )
             except FileNotFoundError as exc:
                 raise CodexError("CODEX_NOT_FOUND", "Codex CLI is not installed") from exc
@@ -191,16 +231,10 @@ class CodexRunner:
                     timeout=timeout or self.settings.review_timeout_seconds,
                 )
             except TimeoutError as exc:
-                process.kill()
-                await process.wait()
+                await _stop_process_group(process)
                 raise CodexError("CODEX_TIMEOUT", "Codex review timed out", retryable=True) from exc
             except asyncio.CancelledError:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=5)
-                except TimeoutError:
-                    process.kill()
-                    await process.wait()
+                await _stop_process_group(process)
                 raise
         if len(stdout) > MAX_PROCESS_OUTPUT or len(stderr) > MAX_PROCESS_OUTPUT:
             raise CodexError("CODEX_OUTPUT_LIMIT", "Codex output exceeded the safe limit")

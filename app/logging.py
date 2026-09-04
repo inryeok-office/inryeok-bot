@@ -5,6 +5,11 @@ from collections.abc import Iterable
 SENSITIVE_PATTERNS = (
     re.compile(r"(?i)(authorization:\s*(?:bearer|token)\s+)[^\s]+"),
     re.compile(r"(?i)((?:secret|private[_ -]?key|token)[=:]\s*)[^\s,;]+"),
+    re.compile(r"(?i)([a-z][a-z0-9+.-]*://[^\s:/]+:)[^@\s]+(@)"),
+    re.compile(
+        r"(?i)((?:password|client[_-]?secret|webhook[_-]?secret|session[_-]?secret)[=:]\s*)[^\s,;&]+"
+    ),
+    re.compile(r"(?i)([?&](?:token|secret|password|key)=[^&#\s]+)"),
     re.compile(r"-----BEGIN [^-]+ PRIVATE KEY-----.*?-----END [^-]+ PRIVATE KEY-----", re.S),
 )
 

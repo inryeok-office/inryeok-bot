@@ -39,6 +39,63 @@ async def test_installation_token_request_and_cache() -> None:
     assert authorization.startswith("Bearer ey") and "installation-value" not in authorization
 
 
+@respx.mock
+@pytest.mark.asyncio
+async def test_github_client_refreshes_installation_token_once_on_401() -> None:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    settings = Settings(
+        environment="test",
+        github_api_url="https://api.github.test",
+        github_app_id="123",
+        github_private_key=pem,
+    )
+    tokens = respx.post("https://api.github.test/app/installations/9/access_tokens").mock(
+        side_effect=[
+            httpx.Response(201, json={"token": "one"}),
+            httpx.Response(201, json={"token": "two"}),
+        ]
+    )
+    request = respx.get("https://api.github.test/repos/acme/repo/pulls/1").mock(
+        side_effect=[httpx.Response(401), httpx.Response(200, json={"number": 1})]
+    )
+    async with httpx.AsyncClient() as http:
+        client = GitHubClient(settings, http)
+        result = await client.get_pull_request(9, "acme", "repo", 1)
+    assert result["number"] == 1
+    assert tokens.call_count == 2
+    assert request.call_count == 2
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_github_client_retries_rate_limit_with_retry_after() -> None:
+    settings = Settings(environment="test", github_api_url="https://api.github.test")
+    request = respx.get("https://api.github.test/repos/acme/repo/pulls/1").mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "0"}),
+            httpx.Response(200, json={"number": 1}),
+        ]
+    )
+    async with httpx.AsyncClient() as http:
+        client = GitHubClient(settings, http)
+
+        class Tokens:
+            async def get(self, installation_id: int) -> str:
+                return "token"
+
+            def invalidate(self, installation_id: int) -> None:
+                pass
+
+        client.tokens = Tokens()  # type: ignore[assignment]
+        assert (await client.get_pull_request(1, "acme", "repo", 1))["number"] == 1
+    assert request.call_count == 2
+
+
 class FakeProcess:
     returncode = 0
 

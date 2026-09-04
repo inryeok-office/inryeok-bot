@@ -128,6 +128,11 @@ class RepositoryCheckout:
 
     async def __aenter__(self) -> Path:
         self.settings.work_root.mkdir(parents=True, exist_ok=True)
+        try:
+            if shutil.disk_usage(self.settings.work_root).free < self.settings.min_work_free_bytes:
+                raise DiffError("review workspace has insufficient free space")
+        except OSError as exc:
+            raise DiffError("unable to inspect review workspace capacity") from exc
         self.path = Path(tempfile.mkdtemp(prefix="review-", dir=self.settings.work_root)).resolve()
         await _git(["init"], self.path, self.settings.git_timeout_seconds)
         await _git(

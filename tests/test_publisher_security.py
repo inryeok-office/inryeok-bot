@@ -91,6 +91,9 @@ def test_markdown_presentation_does_not_change_fingerprint() -> None:
 def test_secret_redaction() -> None:
     assert "hunter2" not in redact("Authorization: Bearer hunter2")
     assert "abc" not in redact("token=abc")
+    assert "pw" not in redact("postgresql://reviewbot:pw@db/reviewbot")
+    assert "client-value" not in redact("client_secret=client-value")
+    assert "url-value" not in redact("https://example.test/callback?token=url-value")
 
 
 def test_production_bypass_never_enabled() -> None:
