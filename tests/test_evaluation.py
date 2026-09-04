@@ -1,5 +1,13 @@
 from app.codex.schemas import Category, Finding, Severity
-from app.review.evaluation import MAX_CALLS, _diff, _expected_status, _groups, create_fixture
+from app.review.evaluation import (
+    MAX_CALLS,
+    _diff,
+    _expected_status,
+    _groups,
+    create_fixture,
+    dry_run,
+    selected_groups,
+)
 
 
 def test_fixture_diff_is_nonempty_and_expected_manifest_stays_outside_checkout(tmp_path) -> None:
@@ -52,3 +60,11 @@ def test_semantic_evaluation_marks_wrong_path_as_missed() -> None:
 def test_opt_in_argument_is_required() -> None:
     # The executable parser enforces --run; keeping the switch explicit prevents pytest usage.
     assert MAX_CALLS == 3
+
+
+def test_group_alias_and_dry_run_are_limited_to_one_fixture() -> None:
+    assert [group.name for group in selected_groups("B")] == ["B-web-mobile"]
+    report = dry_run("C")
+    assert report["planned_calls"] == 1
+    assert report["diff_present"] is True
+    assert report["expected_manifest_in_checkout"] is False

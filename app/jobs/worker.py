@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import signal
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,27 +20,30 @@ from app.review.service import ReviewService, ReviewSkipped
 logger = logging.getLogger(__name__)
 
 FAILURE_MESSAGES = {
-    "QUOTA": (
-        "현재 Codex 사용량 한도에 도달하여 코드 리뷰를 완료하지 못했습니다. "
-        "사용량이 다시 제공된 후 `/review`를 입력해 재시도해 주세요."
-    ),
-    "RATE_LIMIT": (
-        "현재 Codex 요청 제한에 도달하여 코드 리뷰를 완료하지 못했습니다. "
-        "잠시 후 `/review`를 입력해 재시도해 주세요."
-    ),
-    "AUTH": (
-        "현재 리뷰 엔진 인증이 만료되어 코드 리뷰를 완료하지 못했습니다. "
-        "관리자가 Codex 인증을 복구한 후 `/review`를 입력해 재시도해 주세요."
-    ),
-    "SERVICE": (
-        "일시적인 리뷰 엔진 오류로 코드 리뷰를 완료하지 못했습니다. "
-        "잠시 후 `/review`를 입력해 다시 시도해 주세요."
-    ),
-    "INTERNAL": (
-        "내부 오류로 코드 리뷰를 완료하지 못했습니다. "
-        "관리자 확인 후 `/review`를 입력해 다시 시도해 주세요."
-    ),
+    "QUOTA": "## ⚠️ 리뷰를 완료하지 못했습니다\n\nCodex 사용량 한도에 도달했습니다.",
+    "RATE_LIMIT": "## ⏳ 리뷰 요청이 제한되었습니다\n\nCodex 요청 한도에 도달했습니다.",
+    "AUTH": "## 🔐 리뷰를 완료하지 못했습니다\n\n리뷰 엔진 인증을 사용할 수 없습니다.",
+    "SERVICE": "## 🌐 리뷰 엔진에 일시적인 문제가 있습니다\n\n잠시 후 다시 시도해 주세요.",
+    "INTERNAL": "## ⚠️ 리뷰를 완료하지 못했습니다\n\n내부 오류가 발생했습니다.",
 }
+
+
+def failure_message(category: str, retry_at: datetime | None = None) -> str:
+    message = FAILURE_MESSAGES[category]
+    if category in {"QUOTA", "RATE_LIMIT"}:
+        if retry_at is not None:
+            utc_timestamp = retry_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+            kst_timestamp = retry_at.astimezone(ZoneInfo("Asia/Seoul")).strftime(
+                "%Y-%m-%d %H:%M KST"
+            )
+            message += f"\n\n> 다시 시도 가능 시각: **{kst_timestamp}** (`{utc_timestamp}`)"
+        else:
+            message += "\n\n> 재시작 시각은 현재 Codex 응답에서 제공되지 않았습니다."
+    if category == "AUTH":
+        return message + "\n\n관리자가 인증을 복구한 뒤 `/review`로 재시도해 주세요."
+    if category == "INTERNAL":
+        return message + "\n\n관리자 확인 후 `/review`로 재시도해 주세요."
+    return message + "\n\n사용 가능해진 뒤 `/review`로 재시도해 주세요."
 
 
 def failure_category(error: CodexError | Exception) -> str:
@@ -54,7 +59,11 @@ def failure_category(error: CodexError | Exception) -> str:
 
 
 async def publish_failure_notice(
-    repository: JobRepository, github: GitHubClient, job: ReviewJob, category: str
+    repository: JobRepository,
+    github: GitHubClient,
+    job: ReviewJob,
+    category: str,
+    retry_at: datetime | None = None,
 ) -> None:
     """Publish one safe, user-facing failure notice for a PR head and category."""
     notice = await repository.get_or_create_failure_notice(job, category)
@@ -66,7 +75,7 @@ async def publish_failure_notice(
             job.repository_owner,
             job.repository_name,
             job.pull_request_number,
-            FAILURE_MESSAGES[category]
+            failure_message(category, retry_at)
             + f"\n\n<!-- inryeok-review-failure:{category.casefold()} -->",
         )
         notice.github_comment_id = int(posted["id"])
@@ -132,7 +141,9 @@ async def run_worker() -> None:
                     await session.commit()
                 else:
                     await repository.finish(job, JobStatus.FAILED, exc.code, str(exc))
-                    await publish_failure_notice(repository, github, job, failure_category(exc))
+                    await publish_failure_notice(
+                        repository, github, job, failure_category(exc), exc.retry_at
+                    )
             except (httpx.TimeoutException, httpx.NetworkError, DiffError, GitHubAPIError) as exc:
                 assert github is not None
                 await session.rollback()

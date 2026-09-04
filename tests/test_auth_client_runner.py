@@ -132,3 +132,10 @@ def test_codex_failure_classification(message: str, expected: str) -> None:
     error = classify_codex_failure(1, b"", message.encode())
     assert error.code == expected
     assert message not in str(error)
+
+
+def test_codex_quota_retry_time_is_safely_extracted() -> None:
+    error = classify_codex_failure(1, b"", b"usage quota exceeded; resets at 2030-01-02T03:04:05Z")
+    assert error.code == "CODEX_QUOTA"
+    assert error.retry_at is not None
+    assert error.retry_at.isoformat() == "2030-01-02T03:04:05+00:00"

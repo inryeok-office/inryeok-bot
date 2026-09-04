@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -11,10 +13,13 @@ MAX_PROCESS_OUTPUT = 2_000_000
 
 
 class CodexError(RuntimeError):
-    def __init__(self, code: str, message: str, retryable: bool = False) -> None:
+    def __init__(
+        self, code: str, message: str, retryable: bool = False, retry_at: datetime | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
+        self.retry_at = retry_at
 
 
 def _error_text(stdout: bytes, stderr: bytes) -> str:
@@ -30,13 +35,38 @@ def _error_text(stdout: bytes, stderr: bytes) -> str:
     return "\n".join(parts).casefold()
 
 
+def _retry_at(text: str) -> datetime | None:
+    """Extract a bounded retry time without retaining the diagnostic itself."""
+    timestamp = re.search(r"\b(20\d{2}-\d{2}-\d{2}t\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?z)\b", text)
+    if timestamp:
+        try:
+            return datetime.fromisoformat(timestamp.group(1).replace("z", "+00:00")).astimezone(UTC)
+        except ValueError:
+            pass
+    delay = re.search(
+        r"(?:retry(?:\s+after)?|reset(?:s)?(?:\s+in)?)\D{0,20}(\d{1,5})\s*(second|minute|hour)",
+        text,
+    )
+    if not delay:
+        return None
+    amount = int(delay.group(1))
+    if amount > 7 * 24 * 60 * 60:
+        return None
+    seconds = amount * {"second": 1, "minute": 60, "hour": 3600}[delay.group(2)]
+    return datetime.now(UTC) + timedelta(seconds=seconds)
+
+
 def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> CodexError:
     """Classify known Codex CLI failures without retaining untrusted diagnostics."""
     text = _error_text(stdout, stderr)
     if any(
         value in text for value in ("rate limit", "too many requests", "http 429", "status 429")
     ):
-        return CodexError("CODEX_RATE_LIMIT", "Codex request was rate limited")
+        retry_at = _retry_at(text)
+        suffix = f"; retry at {retry_at.isoformat()}" if retry_at else ""
+        return CodexError(
+            "CODEX_RATE_LIMIT", "Codex request was rate limited" + suffix, retry_at=retry_at
+        )
     if any(
         value in text
         for value in (
@@ -48,7 +78,11 @@ def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> Cod
             "credit balance",
         )
     ):
-        return CodexError("CODEX_QUOTA", "Codex usage limit was reached")
+        retry_at = _retry_at(text)
+        suffix = f"; retry at {retry_at.isoformat()}" if retry_at else ""
+        return CodexError(
+            "CODEX_QUOTA", "Codex usage limit was reached" + suffix, retry_at=retry_at
+        )
     if any(
         value in text
         for value in (

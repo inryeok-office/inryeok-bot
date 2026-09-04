@@ -15,6 +15,7 @@ from app.jobs.repository import JobRepository, claim_statement
 from app.jobs.worker import (
     FAILURE_MESSAGES,
     failure_category,
+    failure_message,
     finish_after_error,
     publish_failure_notice,
 )
@@ -175,6 +176,17 @@ async def test_failure_notices_are_korean_and_deduplicated(app_client) -> None:
         assert await session.scalar(select(func.count()).select_from(ReviewFailureNotice)) == len(
             cases
         )
+
+
+def test_quota_notice_includes_only_a_safe_retry_timestamp() -> None:
+    from datetime import UTC, datetime
+
+    body = failure_message("QUOTA", datetime(2030, 1, 2, 3, 4, tzinfo=UTC))
+    assert "##" in body
+    assert "⚠️" in body
+    assert "2030-01-02 12:04 KST" in body
+    assert "2030-01-02 03:04 UTC" in body
+    assert "/review" in body
 
 
 @respx.mock

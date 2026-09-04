@@ -8,6 +8,7 @@ prompts, source text, process diagnostics, or credentials.
 import argparse
 import asyncio
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -27,6 +28,11 @@ from app.review.validator import validate_findings_with_diagnostics
 
 MAX_CALLS = 3
 STOP_CODES = {"CODEX_QUOTA", "CODEX_RATE_LIMIT", "CODEX_AUTH", "CODEX_SERVICE_UNAVAILABLE"}
+GROUP_ALIASES = {
+    "A": "A-general-backend-database",
+    "B": "B-web-mobile",
+    "C": "C-infra-data-library",
+}
 
 
 @dataclass(frozen=True)
@@ -58,10 +64,16 @@ class EvaluationReport:
     raw_findings: int
     schema_valid: int
     changed_line_valid: int
+    confidence_valid: int
+    severity_valid: int
     evidence_valid: int
+    deduplicated: int
     final_findings: int
     expected_status: dict[str, str]
     unexpected_findings: int
+    finding_summaries: tuple[dict[str, object], ...]
+    korean_output: bool
+    markdown_output: bool
     elapsed_seconds: float
 
 
@@ -269,6 +281,43 @@ def _expected_status(spec: GroupSpec, findings: Sequence[Finding]) -> tuple[dict
     return statuses, len(pending)
 
 
+def _finding_summaries(
+    spec: GroupSpec, findings: Sequence[Finding]
+) -> tuple[dict[str, object], ...]:
+    summaries: list[dict[str, object]] = []
+    for finding in findings:
+        text = f"{finding.title} {finding.body}".casefold()
+        expected = next(
+            (
+                issue
+                for issue in spec.expected
+                if issue.path == finding.path and issue.keywords[0] in text
+            ),
+            None,
+        )
+        summaries.append(
+            {
+                "expected_issue_id": expected.id if expected else None,
+                "path": finding.path,
+                "line": finding.line,
+                "severity": finding.severity.value,
+                "category": finding.category.value,
+                "confidence": finding.confidence,
+                "title": finding.title,
+                "trigger_present": any(word in text for word in ("when", "if", "경우", "때")),
+                "impact_present": any(
+                    word in text for word in ("impact", "causes", "영향", "오류")
+                ),
+                "suggestion_present": any(
+                    word in text for word in ("suggest", "should", "제안", "수정")
+                ),
+                "filter_stage": "PUBLISHED",
+                "meaning_verdict": "TRUE_POSITIVE" if expected else "NEEDS_MANUAL_REVIEW",
+            }
+        )
+    return tuple(summaries)
+
+
 async def evaluate_group(spec: GroupSpec, settings: Settings) -> EvaluationReport:
     started = time.monotonic()
     parent = Path(tempfile.mkdtemp(prefix="inryeok-domain-eval-"))
@@ -296,22 +345,28 @@ async def evaluate_group(spec: GroupSpec, settings: Settings) -> EvaluationRepor
             )
         except CodexError as exc:
             return EvaluationReport(
-                spec.name,
-                detection.domains,
-                domains,
-                detection.reasons,
-                PROMPT_VERSION,
-                len(changed),
-                sum(len(item.added_lines) for item in changed.values()),
-                exc.code,
-                0,
-                0,
-                0,
-                0,
-                0,
-                {item.id: "NOT_RUN" for item in spec.expected},
-                0,
-                round(time.monotonic() - started, 2),
+                group=spec.name,
+                detected_domains=detection.domains,
+                effective_domains=domains,
+                detection_reasons=detection.reasons,
+                prompt_version=PROMPT_VERSION,
+                changed_files=len(changed),
+                changed_lines=sum(len(item.added_lines) for item in changed.values()),
+                exit_category=exc.code,
+                raw_findings=0,
+                schema_valid=0,
+                changed_line_valid=0,
+                confidence_valid=0,
+                severity_valid=0,
+                evidence_valid=0,
+                deduplicated=0,
+                final_findings=0,
+                expected_status={item.id: "NOT_RUN" for item in spec.expected},
+                unexpected_findings=0,
+                finding_summaries=(),
+                korean_output=False,
+                markdown_output=False,
+                elapsed_seconds=round(time.monotonic() - started, 2),
             )
         result = validate_findings_with_diagnostics(
             output.findings,
@@ -323,33 +378,70 @@ async def evaluate_group(spec: GroupSpec, settings: Settings) -> EvaluationRepor
             review_profile="BALANCED",
         )
         statuses, unexpected = _expected_status(spec, result.findings)
+        summaries = _finding_summaries(spec, result.findings)
+        rendered = " ".join(f"{item.title} {item.body}" for item in result.findings)
         return EvaluationReport(
-            spec.name,
-            detection.domains,
-            domains,
-            detection.reasons,
-            PROMPT_VERSION,
-            len(changed),
-            sum(len(item.added_lines) for item in changed.values()),
-            "SUCCESS",
-            len(output.findings),
-            len(output.findings),
-            result.changed_line_count,
-            result.evidence_count,
-            result.published_count,
-            statuses,
-            unexpected,
-            round(time.monotonic() - started, 2),
+            group=spec.name,
+            detected_domains=detection.domains,
+            effective_domains=domains,
+            detection_reasons=detection.reasons,
+            prompt_version=PROMPT_VERSION,
+            changed_files=len(changed),
+            changed_lines=sum(len(item.added_lines) for item in changed.values()),
+            exit_category="SUCCESS",
+            raw_findings=len(output.findings),
+            schema_valid=len(output.findings),
+            changed_line_valid=result.changed_line_count,
+            confidence_valid=result.confidence_count,
+            severity_valid=result.severity_count,
+            evidence_valid=result.evidence_count,
+            deduplicated=result.deduplicated_count,
+            final_findings=result.published_count,
+            expected_status=statuses,
+            unexpected_findings=unexpected,
+            finding_summaries=summaries,
+            korean_output=bool(re.search(r"[가-힣]", rendered)),
+            markdown_output=any(marker in rendered for marker in ("**", "#", "`", "- ")),
+            elapsed_seconds=round(time.monotonic() - started, 2),
         )
     finally:
         shutil.rmtree(parent, ignore_errors=True)
 
 
-async def run_all(settings: Settings, group_name: str | None = None) -> list[EvaluationReport]:
+def selected_groups(group: str | None) -> tuple[GroupSpec, ...]:
+    if group is None:
+        return _groups()
+    return tuple(spec for spec in _groups() if spec.name == GROUP_ALIASES[group])
+
+
+def dry_run(group: str) -> dict[str, object]:
+    spec = selected_groups(group)[0]
+    parent = Path(tempfile.mkdtemp(prefix="inryeok-domain-eval-dry-run-"))
+    try:
+        checkout, base, head = create_fixture(spec, parent)
+        diff, changed = _diff(checkout, base, head)
+        detection = detect_domains(list(changed))
+        domains = effective_domains(ReviewDomainMode.AUTO.value, None, detection)
+        return {
+            "group": group,
+            "planned_calls": 1,
+            "base_head_valid": bool(base) and bool(head),
+            "diff_present": bool(diff),
+            "expected_manifest_in_checkout": False,
+            "detected_domains": detection.domains,
+            "effective_domains": domains,
+            "general_included": "GENERAL" in domains,
+            "changed_files": len(changed),
+            "changed_lines": sum(len(item.added_lines) for item in changed.values()),
+            "prompt_version": PROMPT_VERSION,
+        }
+    finally:
+        shutil.rmtree(parent, ignore_errors=True)
+
+
+async def run_all(settings: Settings, group: str | None = None) -> list[EvaluationReport]:
     reports: list[EvaluationReport] = []
-    for spec in _groups():
-        if group_name and spec.name != group_name:
-            continue
+    for spec in selected_groups(group):
         if len(reports) >= MAX_CALLS:
             break
         report = await evaluate_group(spec, settings)
@@ -364,8 +456,14 @@ def main() -> None:
     parser.add_argument(
         "--run", action="store_true", help="consume at most three Codex evaluations"
     )
-    parser.add_argument("--group", choices=[spec.name for spec in _groups()])
+    parser.add_argument("--group", choices=sorted(GROUP_ALIASES))
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.dry_run:
+        if not args.group:
+            parser.error("--dry-run requires --group")
+        print(json.dumps(dry_run(args.group), ensure_ascii=False, indent=2))
+        return
     if not args.run:
         parser.error("pass --run to explicitly permit Codex evaluation")
     reports = asyncio.run(run_all(get_settings(), args.group))
