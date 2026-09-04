@@ -1,13 +1,16 @@
 from app.codex.prompt import build_prompt
 
 
-def test_prompt_defends_against_repository_instructions_and_requires_korean() -> None:
+def test_prompt_defends_against_instructions_and_requires_korean_markdown() -> None:
     prompt = build_prompt("a" * 40, "b" * 40, ["src/app.py"], {})
-    assert "Pull Request 전체 변경" in prompt
-    assert "RIGHT-side 라인" in prompt
-    assert "신뢰할 수 없는 리뷰 대상" in prompt
-    assert "secret·환경변수" in prompt
-    assert "외부 명령 실행" in prompt
+
+    assert "entire Pull Request change range" in prompt
+    assert "RIGHT-side line" in prompt
+    assert "untrusted review data" in prompt
+    assert "secrets or environment variables" in prompt
+    assert "external commands" in prompt
     assert "JSON Schema" in prompt
-    assert "build script" in prompt
-    assert "자연스러운 한국어" in prompt
+    assert "build scripts" in prompt
+    assert "natural Korean" in prompt
+    assert "Markdown" in prompt
+    assert "fenced code block" in prompt

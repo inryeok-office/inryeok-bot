@@ -94,7 +94,7 @@ async def test_fake_end_to_end_worker_pipeline(app_client, monkeypatch) -> None:
         run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == job.id))
         assert run and run.finding_count == 1 and run.github_review_id == 5_107_673_581
         assert github.payload["comments"][0]["side"] == "RIGHT"
-        assert "검토했습니다" in github.payload["body"]
+        assert "\uac80\ud1a0\ud588" in github.payload["body"]
         assert FakeCheckout.diff_arguments[:2] == ("a" * 40, "b" * 40)
 
 
@@ -123,7 +123,10 @@ async def test_no_findings_posts_korean_completion_review(app_client, monkeypatc
             session, github, FakeRunner(ReviewOutput(summary="ok", findings=[]))
         ).execute(job)  # type: ignore[arg-type]
         assert github.payload["comments"] == []
-        assert "게시할 문제를 찾지 못했습니다" in github.payload["body"]
+        assert (
+            "\uc218\uc815\uc774 \ud544\uc694\ud55c \ubb38\uc81c\ub97c "
+            "\ucc3e\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4." in github.payload["body"]
+        )
 
 
 @pytest.mark.asyncio

@@ -3,28 +3,80 @@ from typing import Any
 
 from app.codex.schemas import Finding
 
+_SEVERITY_LABELS = {
+    "CRITICAL": "Critical",
+    "HIGH": "High",
+    "MEDIUM": "Medium",
+    "LOW": "Low",
+}
+_SEVERITY_ICONS = {
+    "CRITICAL": "\U0001f6a8",
+    "HIGH": "\U0001f534",
+    "MEDIUM": "\U0001f7e0",
+    "LOW": "\U0001f7e1",
+}
+
+
+def _inline_text(value: str) -> str:
+    """Keep model text out of Markdown control positions used by the publisher."""
+    compact = " ".join(value.strip().splitlines())
+    return compact.replace("\\", "\\\\").replace("`", "\\`").replace("#", "\\#")
+
+
+def _summary_item(finding: Finding) -> str:
+    prefix = f"- **{finding.severity.value} \u00b7 {finding.category.value}** \u2014 "
+    return prefix + _inline_text(finding.title)
+
+
+def _finding_body(finding: Finding) -> str:
+    heading = _inline_text(finding.title)
+    # The model body is validated Markdown and intentionally remains intact.
+    return (
+        f"**{_SEVERITY_ICONS[finding.severity.value]} "
+        f"{finding.severity.value} \u00b7 {finding.category.value}**\n\n"
+        f"### {heading}\n\n{finding.body.strip()}"
+    )
+
 
 def build_review_payload(
     findings: list[Finding], reviewed_file_count: int, head_sha: str, rerun: bool | None = None
 ) -> dict[str, Any]:
     counts = Counter(item.severity.value for item in findings)
+    table = "\n".join(
+        f"| {_SEVERITY_LABELS[severity]} | {counts.get(severity, 0)} |"
+        for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+    )
     if findings:
-        result = (
-            f"Inryeok Bot이 {reviewed_file_count}개 파일을 검토했습니다.\n\n"
-            f"발견 사항 {len(findings)}개\n"
-            f"- 심각: {counts.get('CRITICAL', 0)}\n"
-            f"- 높음: {counts.get('HIGH', 0)}\n"
-            f"- 중간: {counts.get('MEDIUM', 0)}\n"
-            f"- 낮음: {counts.get('LOW', 0)}\n\n"
+        overview = (
+            "\uc218\uc815\uc774 \ud544\uc694\ud55c \ubb38\uc81c "
+            f"**{len(findings)}\uac1c**\ub97c \ubc1c\uacac\ud588\uc2b5\ub2c8\ub2e4."
+        )
+        details = "### \uc8fc\uc694 \ub0b4\uc6a9\n\n" + "\n".join(
+            _summary_item(item) for item in findings
         )
     else:
-        result = (
-            f"Inryeok Bot이 {reviewed_file_count}개 파일을 검토했습니다.\n\n"
-            "게시할 문제를 찾지 못했습니다.\n\n"
+        overview = (
+            "\uc218\uc815\uc774 \ud544\uc694\ud55c \ubb38\uc81c\ub97c "
+            "\ucc3e\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4."
         )
-    rerun_note = "재실행 검토입니다.\n\n" if rerun else ""
-    body = f"{result}{rerun_note}검토한 head: `{head_sha[:12]}`\n\n<!-- inryeok-review:v1 -->"
-    icons = {"CRITICAL": "🚨", "HIGH": "🔴", "MEDIUM": "🟠", "LOW": "🟡"}
+        details = (
+            "### \uc644\ub8cc\n\n\ubcc0\uacbd \uc0ac\ud56d\uc744 \uac80\ud1a0\ud588\uc73c\uba70 "
+            "\uac8c\uc2dc\ud560 \uc778\ub77c\uc778 \ucf54\uba58\ud2b8\uac00 "
+            "\uc5c6\uc2b5\ub2c8\ub2e4."
+        )
+    rerun_note = (
+        "\n\n> \uc7ac\uc2e4\ud589\ud55c \uac80\ud1a0 \uacb0\uacfc\uc785\ub2c8\ub2e4."
+        if rerun
+        else ""
+    )
+    body = (
+        "## \ub9ac\ubdf0 \uacb0\uacfc\n\n"
+        f"\ubcc0\uacbd\ub41c **{reviewed_file_count}\uac1c \ud30c\uc77c**\uc744 "
+        f"\uac80\ud1a0\ud588\uc73c\uba70, {overview}\n\n"
+        "| \uc2ec\uac01\ub3c4 | \uac1c\uc218 |\n| --- | ---: |\n"
+        f"{table}\n\n{details}{rerun_note}\n\n"
+        f"\uac80\ud1a0\ud55c head: `{head_sha[:12]}`\n\n<!-- inryeok-review:v1 -->"
+    )
     return {
         "commit_id": head_sha,
         "event": "COMMENT",
@@ -34,10 +86,7 @@ def build_review_payload(
                 "path": item.path,
                 "line": item.line,
                 "side": "RIGHT",
-                "body": (
-                    f"{icons[item.severity.value]} {item.severity.value} · {item.title}"
-                    f"\n\n{item.body}"
-                ),
+                "body": _finding_body(item),
             }
             for item in findings
         ],
