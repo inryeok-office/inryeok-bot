@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = Field(2.0, ge=0.1)
     worker_max_attempts: int = Field(3, ge=1, le=10)
     stale_running_seconds: int = Field(1800, ge=60)
+    codex_model_allowlist: str = ""
+    default_review_language: str = "ko"
+    default_review_profile: str = "BALANCED"
 
     @field_validator("default_ignore_patterns", mode="before")
     @classmethod
@@ -116,6 +119,12 @@ class Settings(BaseSettings):
         if parsed.hostname == "api.github.com":
             return "https://github.com"
         return f"{parsed.scheme}://{parsed.netloc}"
+
+    @property
+    def allowed_codex_models(self) -> tuple[str, ...]:
+        return tuple(
+            value.strip() for value in self.codex_model_allowlist.split(",") if value.strip()
+        )
 
 
 @lru_cache

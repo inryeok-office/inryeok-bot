@@ -36,6 +36,17 @@ class TriggerType(StrEnum):
     RETRY = "RETRY"
 
 
+class ReviewLanguage(StrEnum):
+    KO = "ko"
+    EN = "en"
+
+
+class ReviewProfile(StrEnum):
+    CONSERVATIVE = "CONSERVATIVE"
+    BALANCED = "BALANCED"
+    THOROUGH = "THOROUGH"
+
+
 class ReviewJob(Base):
     __tablename__ = "review_jobs"
     __table_args__ = (
@@ -73,6 +84,8 @@ class ReviewJob(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     github_check_run_id: Mapped[int | None] = mapped_column(BigInteger)
+    retry_of_job_id: Mapped[int | None] = mapped_column(ForeignKey("review_jobs.id"))
+    superseded_by_head_sha: Mapped[str | None] = mapped_column(String(64))
     runs: Mapped[list["ReviewRun"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
@@ -103,6 +116,60 @@ class RepositorySettings(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    override_enabled: Mapped[bool | None] = mapped_column(Boolean)
+    override_auto_review_enabled: Mapped[bool | None] = mapped_column(Boolean)
+    override_command_review_enabled: Mapped[bool | None] = mapped_column(Boolean)
+    override_language: Mapped[str | None] = mapped_column(String(8))
+    override_review_profile: Mapped[str | None] = mapped_column(String(32))
+    override_model: Mapped[str | None] = mapped_column(String(128))
+    override_max_findings: Mapped[int | None] = mapped_column(Integer)
+    override_minimum_confidence: Mapped[float | None] = mapped_column(Float)
+    override_include_low_severity: Mapped[bool | None] = mapped_column(Boolean)
+    override_ignored_paths: Mapped[str | None] = mapped_column(Text)
+    override_timeout_seconds: Mapped[int | None] = mapped_column(Integer)
+    override_minimum_severity: Mapped[str | None] = mapped_column(String(16))
+    override_enabled_categories: Mapped[str | None] = mapped_column(Text)
+    override_review_on_opened: Mapped[bool | None] = mapped_column(Boolean)
+    override_review_on_reopened: Mapped[bool | None] = mapped_column(Boolean)
+    override_review_on_ready_for_review: Mapped[bool | None] = mapped_column(Boolean)
+    override_review_on_synchronize: Mapped[bool | None] = mapped_column(Boolean)
+
+
+class GlobalReviewSettings(Base):
+    __tablename__ = "global_review_settings"
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    auto_review_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    command_review_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    language: Mapped[str] = mapped_column(String(8), default=ReviewLanguage.KO.value)
+    review_profile: Mapped[str] = mapped_column(String(32), default=ReviewProfile.BALANCED.value)
+    model: Mapped[str | None] = mapped_column(String(128))
+    max_findings: Mapped[int] = mapped_column(Integer, default=10)
+    minimum_confidence: Mapped[float] = mapped_column(Float, default=0.9)
+    include_low_severity: Mapped[bool] = mapped_column(Boolean, default=False)
+    minimum_severity: Mapped[str] = mapped_column(String(16), default="MEDIUM")
+    enabled_categories: Mapped[str] = mapped_column(Text, default="")
+    ignored_paths: Mapped[str] = mapped_column(Text, default="")
+    review_on_opened: Mapped[bool] = mapped_column(Boolean, default=True)
+    review_on_reopened: Mapped[bool] = mapped_column(Boolean, default=True)
+    review_on_ready_for_review: Mapped[bool] = mapped_column(Boolean, default=True)
+    review_on_synchronize: Mapped[bool] = mapped_column(Boolean, default=True)
+    codex_timeout_seconds: Mapped[int] = mapped_column(Integer, default=900)
+    updated_by: Mapped[str | None] = mapped_column(String(255))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AdminAuditLog(Base):
+    __tablename__ = "admin_audit_logs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor_login: Mapped[str] = mapped_column(String(255))
+    action: Mapped[str] = mapped_column(String(100))
+    target_type: Mapped[str] = mapped_column(String(64))
+    target_id: Mapped[str] = mapped_column(String(128))
+    summary: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ReviewRun(Base):

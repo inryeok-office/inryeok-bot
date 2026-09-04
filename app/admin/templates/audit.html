@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Audit log</h1>
+<table><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Summary</th></tr></thead><tbody>
+{% for entry in entries %}<tr><td>{{ entry.created_at }}</td><td>{{ entry.actor_login }}</td><td>{{ entry.action }}</td><td>{{ entry.target_type }} {{ entry.target_id }}</td><td>{{ entry.summary }}</td></tr>{% else %}<tr><td colspan="5">No audit entries</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

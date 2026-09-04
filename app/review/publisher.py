@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from collections import Counter
 from typing import Any
 
@@ -39,43 +40,76 @@ def _finding_body(finding: Finding) -> str:
 
 
 def build_review_payload(
-    findings: list[Finding], reviewed_file_count: int, head_sha: str, rerun: bool | None = None
+    findings: list[Finding],
+    reviewed_file_count: int,
+    head_sha: str,
+    rerun: bool | None = None,
+    language: str = "ko",
 ) -> dict[str, Any]:
     counts = Counter(item.severity.value for item in findings)
     table = "\n".join(
         f"| {_SEVERITY_LABELS[severity]} | {counts.get(severity, 0)} |"
         for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
     )
+    english = language == "en"
     if findings:
         overview = (
-            "\uc218\uc815\uc774 \ud544\uc694\ud55c \ubb38\uc81c "
+            f"Found **{len(findings)}** issue(s) that need attention."
+            if english
+            else "\uc218\uc815\uc774 \ud544\uc694\ud55c \ubb38\uc81c "
             f"**{len(findings)}\uac1c**\ub97c \ubc1c\uacac\ud588\uc2b5\ub2c8\ub2e4."
         )
-        details = "### \uc8fc\uc694 \ub0b4\uc6a9\n\n" + "\n".join(
-            _summary_item(item) for item in findings
+        details = (
+            ("### Key findings" if english else "### \uc8fc\uc694 \ub0b4\uc6a9")
+            + "\n\n"
+            + "\n".join(_summary_item(item) for item in findings)
         )
     else:
         overview = (
-            "\uc218\uc815\uc774 \ud544\uc694\ud55c \ubb38\uc81c\ub97c "
+            "No issues requiring an inline comment were found."
+            if english
+            else "\uc218\uc815\uc774 \ud544\uc694\ud55c \ubb38\uc81c\ub97c "
             "\ucc3e\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4."
         )
         details = (
-            "### \uc644\ub8cc\n\n\ubcc0\uacbd \uc0ac\ud56d\uc744 \uac80\ud1a0\ud588\uc73c\uba70 "
-            "\uac8c\uc2dc\ud560 \uc778\ub77c\uc778 \ucf54\uba58\ud2b8\uac00 "
-            "\uc5c6\uc2b5\ub2c8\ub2e4."
+            "### Complete\n\nThe changes were reviewed and no inline comments need to be posted."
+            if english
+            else (
+                "### \uc644\ub8cc\n\n\ubcc0\uacbd \uc0ac\ud56d\uc744 \uac80\ud1a0\ud588\uc73c\uba70 "
+                "\uac8c\uc2dc\ud560 \uc778\ub77c\uc778 \ucf54\uba58\ud2b8\uac00 \uc5c6\uc2b5\ub2c8\ub2e4."
+            )
         )
     rerun_note = (
-        "\n\n> \uc7ac\uc2e4\ud589\ud55c \uac80\ud1a0 \uacb0\uacfc\uc785\ub2c8\ub2e4."
+        (
+            "\n\n> This is a rerun of the review."
+            if english
+            else "\n\n> \uc7ac\uc2e4\ud589\ud55c \uac80\ud1a0 \uacb0\uacfc\uc785\ub2c8\ub2e4."
+        )
         if rerun
         else ""
     )
     body = (
-        "## \ub9ac\ubdf0 \uacb0\uacfc\n\n"
-        f"\ubcc0\uacbd\ub41c **{reviewed_file_count}\uac1c \ud30c\uc77c**\uc744 "
-        f"\uac80\ud1a0\ud588\uc73c\uba70, {overview}\n\n"
-        "| \uc2ec\uac01\ub3c4 | \uac1c\uc218 |\n| --- | ---: |\n"
-        f"{table}\n\n{details}{rerun_note}\n\n"
-        f"\uac80\ud1a0\ud55c head: `{head_sha[:12]}`\n\n<!-- inryeok-review:v1 -->"
+        ("## Review result\n\n" if english else "## \ub9ac\ubdf0 \uacb0\uacfc\n\n")
+        + (
+            f"Reviewed **{reviewed_file_count} file(s)**. {overview}\n\n"
+            if english
+            else (
+                f"\ubcc0\uacbd\ub41c **{reviewed_file_count}\uac1c \ud30c\uc77c**\uc744 \uac80\ud1a0\ud588\uc73c\uba70, "
+                f"{overview}\n\n"
+            )
+        )
+        + (
+            "| Severity | Count |\n| --- | ---: |\n"
+            if english
+            else "| \uc2ec\uac01\ub3c4 | \uac1c\uc218 |\n| --- | ---: |\n"
+        )
+        + f"{table}\n\n{details}{rerun_note}\n\n"
+        + (
+            f"Reviewed head: `{head_sha[:12]}`"
+            if english
+            else f"\uac80\ud1a0\ud55c head: `{head_sha[:12]}`"
+        )
+        + "\n\n<!-- inryeok-review:v1 -->"
     )
     return {
         "commit_id": head_sha,

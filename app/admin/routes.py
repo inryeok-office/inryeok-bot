@@ -11,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.admin.auth import AdminPrincipal, csrf_token, require_admin, verify_csrf
 from app.config import Settings, get_settings
 from app.db.session import get_session
-from app.jobs.models import RepositorySettings, ReviewJob
+from app.jobs.models import AdminAuditLog, GlobalReviewSettings, RepositorySettings, ReviewJob
 from app.jobs.repository import JobRepository
+from app.review.settings import resolve, validate_choice, validate_paths
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -42,6 +43,34 @@ def _context(
         "app_name": settings.github_app_display_name,
         **values,
     }
+
+
+def _optional_bool(value: str) -> bool | None:
+    if value == "inherit":
+        return None
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise ValueError("invalid override")
+
+
+def _optional_int(value: str, minimum: int, maximum: int) -> int | None:
+    if not value:
+        return None
+    parsed = int(value)
+    if not minimum <= parsed <= maximum:
+        raise ValueError("numeric override outside safety limit")
+    return parsed
+
+
+def _optional_float(value: str, minimum: float, maximum: float) -> float | None:
+    if not value:
+        return None
+    parsed = float(value)
+    if not minimum <= parsed <= maximum:
+        raise ValueError("numeric override outside safety limit")
+    return parsed
 
 
 async def _require_repository_admin(
@@ -88,10 +117,18 @@ async def index(
             .where(_account_filter(RepositorySettings.repository_owner, settings))
         )
     ).all()
+    global_settings = await session.get(GlobalReviewSettings, 1)
     return templates.TemplateResponse(
         request,
         "index.html",
-        _context(request, principal, settings, jobs=jobs, repositories=repositories),
+        _context(
+            request,
+            principal,
+            settings,
+            jobs=jobs,
+            repositories=repositories,
+            global_settings=global_settings,
+        ),
     )
 
 
@@ -110,6 +147,11 @@ async def jobs(
             .limit(100)
         )
     ).all()
+    global_settings = await session.get(GlobalReviewSettings, 1)
+    if global_settings is None:
+        global_settings = GlobalReviewSettings(id=1)
+        session.add(global_settings)
+        await session.commit()
     return templates.TemplateResponse(
         request, "jobs.html", _context(request, principal, settings, jobs=values)
     )
@@ -165,11 +207,147 @@ async def repository_detail(
     if not repository:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "repository not found")
     _ensure_allowed(repository.repository_owner, settings)
+    global_settings = await session.get(GlobalReviewSettings, 1)
+    if global_settings is None:
+        global_settings = GlobalReviewSettings(id=1)
+        session.add(global_settings)
+        await session.commit()
     return templates.TemplateResponse(
         request,
         "repository_detail.html",
-        _context(request, principal, settings, repository=repository),
+        _context(
+            request,
+            principal,
+            settings,
+            repository=repository,
+            effective=resolve(global_settings, repository, settings),
+            models=settings.allowed_codex_models,
+        ),
     )
+
+
+@router.get("/settings", response_class=HTMLResponse)
+async def global_settings_page(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    principal: AdminPrincipal = Depends(require_admin),
+) -> HTMLResponse:
+    value = await session.get(GlobalReviewSettings, 1)
+    if value is None:
+        value = GlobalReviewSettings(id=1)
+        session.add(value)
+        await session.commit()
+    return templates.TemplateResponse(
+        request,
+        "global_settings.html",
+        _context(
+            request,
+            principal,
+            settings,
+            global_settings=value,
+            models=settings.allowed_codex_models,
+        ),
+    )
+
+
+@router.get("/audit", response_class=HTMLResponse)
+async def audit_log(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    principal: AdminPrincipal = Depends(require_admin),
+) -> HTMLResponse:
+    entries = (
+        await session.scalars(
+            select(AdminAuditLog).order_by(AdminAuditLog.created_at.desc()).limit(100)
+        )
+    ).all()
+    return templates.TemplateResponse(
+        request, "audit.html", _context(request, principal, settings, entries=entries)
+    )
+
+
+@router.post("/settings")
+async def update_global_settings(
+    csrf: str = Form(..., alias="_csrf"),
+    language: str = Form("ko"),
+    review_profile: str = Form("BALANCED"),
+    model: str = Form(""),
+    max_findings: int = Form(10),
+    minimum_confidence: float = Form(0.9),
+    codex_timeout_seconds: int = Form(900),
+    enabled: bool = Form(False),
+    auto_review_enabled: bool = Form(False),
+    command_review_enabled: bool = Form(False),
+    include_low_severity: bool = Form(False),
+    minimum_severity: str = Form("MEDIUM"),
+    enabled_categories: str = Form(""),
+    ignored_paths: str = Form(""),
+    review_on_opened: bool = Form(False),
+    review_on_reopened: bool = Form(False),
+    review_on_ready_for_review: bool = Form(False),
+    review_on_synchronize: bool = Form(False),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    principal: AdminPrincipal = Depends(require_admin),
+) -> RedirectResponse:
+    verify_csrf(csrf, principal, settings)
+    try:
+        validate_choice(language, review_profile, model or None, settings)
+        if minimum_severity.upper() not in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}:
+            raise ValueError("unsupported minimum severity")
+        validate_paths(ignored_paths)
+        if (
+            not 0.8 <= minimum_confidence <= 1
+            or not 1 <= max_findings <= 50
+            or not 30 <= codex_timeout_seconds <= 3600
+        ):
+            raise ValueError("setting outside safety limit")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    value = await session.get(GlobalReviewSettings, 1) or GlobalReviewSettings(id=1)
+    session.add(value)
+    value.enabled, value.auto_review_enabled, value.command_review_enabled = (
+        enabled,
+        auto_review_enabled,
+        command_review_enabled,
+    )
+    value.language, value.review_profile, value.model = language, review_profile, model or None
+    value.max_findings, value.minimum_confidence, value.codex_timeout_seconds = (
+        max_findings,
+        minimum_confidence,
+        codex_timeout_seconds,
+    )
+    value.include_low_severity, value.ignored_paths, value.updated_by = (
+        include_low_severity,
+        ignored_paths,
+        principal.github_login,
+    )
+    value.minimum_severity = minimum_severity.upper()
+    value.enabled_categories = enabled_categories
+    (
+        value.review_on_opened,
+        value.review_on_reopened,
+        value.review_on_ready_for_review,
+        value.review_on_synchronize,
+    ) = (
+        review_on_opened,
+        review_on_reopened,
+        review_on_ready_for_review,
+        review_on_synchronize,
+    )
+    session.add(
+        AdminAuditLog(
+            actor_login=principal.github_login,
+            action="update",
+            target_type="global_settings",
+            target_id="1",
+            summary="Updated review defaults",
+        )
+    )
+    await session.commit()
+    return RedirectResponse("/admin/settings", status_code=303)
 
 
 @router.post("/repositories/{repository_id}/settings")
@@ -184,6 +362,17 @@ async def update_repository(
     include_low_severity: bool = Form(False),
     ignore_draft: bool = Form(False),
     ignore_patterns: str = Form(""),
+    override_enabled: str = Form("inherit"),
+    override_auto_review_enabled: str = Form("inherit"),
+    override_command_review_enabled: str = Form("inherit"),
+    override_language: str = Form(""),
+    override_review_profile: str = Form(""),
+    override_model: str = Form(""),
+    override_max_findings: str = Form(""),
+    override_minimum_confidence: str = Form(""),
+    override_include_low_severity: str = Form("inherit"),
+    override_ignored_paths: str = Form(""),
+    override_timeout_seconds: str = Form(""),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     principal: AdminPrincipal = Depends(require_admin),
@@ -201,6 +390,39 @@ async def update_repository(
     repository.include_low_severity = include_low_severity
     repository.ignore_draft = ignore_draft
     repository.ignore_patterns = ignore_patterns
+    try:
+        validate_choice(
+            override_language or "ko",
+            override_review_profile or "BALANCED",
+            override_model or None,
+            settings,
+        )
+        repository.override_enabled = _optional_bool(override_enabled)
+        repository.override_auto_review_enabled = _optional_bool(override_auto_review_enabled)
+        repository.override_command_review_enabled = _optional_bool(override_command_review_enabled)
+        repository.override_language = override_language or None
+        repository.override_review_profile = override_review_profile or None
+        repository.override_model = override_model or None
+        repository.override_max_findings = _optional_int(override_max_findings, 1, 50)
+        repository.override_minimum_confidence = _optional_float(
+            override_minimum_confidence, 0.8, 1
+        )
+        repository.override_include_low_severity = _optional_bool(override_include_low_severity)
+        repository.override_ignored_paths = override_ignored_paths or None
+        if repository.override_ignored_paths is not None:
+            validate_paths(repository.override_ignored_paths)
+        repository.override_timeout_seconds = _optional_int(override_timeout_seconds, 30, 3600)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    session.add(
+        AdminAuditLog(
+            actor_login=principal.github_login,
+            action="update",
+            target_type="repository_settings",
+            target_id=str(repository.id),
+            summary="Updated legacy repository review controls",
+        )
+    )
     await session.commit()
     return RedirectResponse(f"/admin/repositories/{repository.id}", status_code=303)
 
@@ -228,5 +450,17 @@ async def retry_job(
     if not repository:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "GitHub App is not installed")
     await _require_repository_admin(repository, principal, settings)
-    await JobRepository(session).retry(job_id)
+    retry = await JobRepository(session).retry(job_id)
+    if retry is not None:
+        session.add(
+            AdminAuditLog(
+                actor_login=principal.github_login,
+                action="retry",
+                target_type="review_job",
+                target_id=str(job_id),
+                summary=f"Created retry job {retry.id}",
+            )
+        )
+        await session.commit()
+        return RedirectResponse(f"/admin/jobs/{retry.id}", status_code=303)
     return RedirectResponse(f"/admin/jobs/{job_id}", status_code=303)

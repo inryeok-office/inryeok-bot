@@ -12,8 +12,9 @@ from app.db.session import get_session
 from app.github.client import GitHubClient
 from app.github.schemas import IssueCommentEvent, PullRequestEvent, is_review_command
 from app.github.verifier import verify_signature
-from app.jobs.models import RepositorySettings, TriggerType, WebhookDelivery
+from app.jobs.models import GlobalReviewSettings, RepositorySettings, TriggerType, WebhookDelivery
 from app.jobs.repository import JobRepository
+from app.review.settings import EffectiveReviewSettings, resolve
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -67,6 +68,21 @@ async def _disable_installation(session: AsyncSession, installation_id: int) -> 
     for value in values:
         value.enabled = False
         value.installed = False
+
+
+async def _effective_settings(
+    session: AsyncSession, repository: RepositorySettings, settings: Settings
+) -> EffectiveReviewSettings:
+    global_settings = await session.get(GlobalReviewSettings, 1)
+    if global_settings is None:
+        global_settings = GlobalReviewSettings(id=1)
+        session.add(global_settings)
+        await session.flush()
+    return resolve(global_settings, repository, settings)
+
+
+def _trigger_enabled(action: str, effective: EffectiveReviewSettings) -> bool:
+    return bool(getattr(effective, f"review_on_{action}"))
 
 
 async def _record_delivery(session: AsyncSession, delivery_id: str, event_name: str) -> bool:
@@ -184,13 +200,13 @@ async def github_webhook(
                 pr_event.repository.name,
                 settings,
             )
-            if (
-                not repo_settings.installed
-                or not repo_settings.enabled
-                or not repo_settings.auto_review
-            ):
+            effective = await _effective_settings(session, repo_settings, settings)
+            if not effective.enabled or not effective.auto_review_enabled:
                 await session.commit()
                 return {"accepted": True, "ignored": "repository_disabled"}
+            if not _trigger_enabled(pr_event.action, effective):
+                await session.commit()
+                return {"accepted": True, "ignored": "trigger_disabled"}
             if pr_event.pull_request.draft and repo_settings.ignore_draft:
                 await session.commit()
                 return {"accepted": True, "ignored": "draft"}
@@ -228,7 +244,8 @@ async def github_webhook(
                 comment_event.repository.name,
                 settings,
             )
-            if not repo_settings.installed or not repo_settings.enabled:
+            effective = await _effective_settings(session, repo_settings, settings)
+            if not effective.enabled or not effective.command_review_enabled:
                 await session.commit()
                 return {"accepted": True, "ignored": "repository_disabled"}
             raw_pr = await github.get_pull_request(

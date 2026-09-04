@@ -22,4 +22,5 @@ build/
 postgres-data/
 work/
 checkouts/
+backups/
 *.log

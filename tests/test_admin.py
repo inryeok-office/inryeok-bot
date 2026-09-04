@@ -15,7 +15,7 @@ from app.admin.auth import (
 )
 from app.admin.oauth import safe_admin_redirect
 from app.config import Settings, get_settings
-from app.jobs.models import AdminSession, RepositorySettings
+from app.jobs.models import AdminAuditLog, AdminSession, GlobalReviewSettings, RepositorySettings
 from app.main import app
 
 
@@ -160,6 +160,44 @@ async def test_settings_change_requires_csrf(app_client) -> None:
         data={"_csrf": "invalid", "min_confidence": "0.9", "max_findings": "10"},
     )
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_global_settings_are_saved_with_audit_log(app_client) -> None:
+    client, factory, settings, principal, _ = await authenticated_repository(app_client)
+    response = await client.post(
+        "/admin/settings",
+        data={
+            "_csrf": csrf_token(principal, settings),
+            "enabled": "true",
+            "auto_review_enabled": "true",
+            "command_review_enabled": "true",
+            "language": "en",
+            "review_profile": "THOROUGH",
+            "max_findings": "8",
+            "minimum_confidence": "0.9",
+            "minimum_severity": "MEDIUM",
+            "codex_timeout_seconds": "600",
+            "review_on_opened": "true",
+            "review_on_reopened": "true",
+            "review_on_ready_for_review": "true",
+            "review_on_synchronize": "true",
+        },
+    )
+    assert response.status_code == 303
+    async with factory() as session:
+        value = await session.get(GlobalReviewSettings, 1)
+        audit = await session.scalar(select(AdminAuditLog).limit(1))
+        assert value and value.language == "en" and value.review_profile == "THOROUGH"
+        assert audit and audit.target_type == "global_settings"
+
+
+@pytest.mark.asyncio
+async def test_audit_log_page_is_available_to_authenticated_admin(app_client) -> None:
+    client, _, _, _, _ = await authenticated_repository(app_client)
+    response = await client.get("/admin/audit")
+    assert response.status_code == 200
+    assert "Audit log" in response.text
 
 
 @pytest.mark.asyncio

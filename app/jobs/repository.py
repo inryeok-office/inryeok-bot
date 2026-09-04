@@ -25,6 +25,24 @@ class JobRepository:
         job = ReviewJob(**values)
         self.session.add(job)
         try:
+            if values["trigger_type"] == TriggerType.AUTO:
+                await self.session.execute(
+                    update(ReviewJob)
+                    .where(
+                        ReviewJob.status == JobStatus.PENDING,
+                        ReviewJob.repository_owner == values["repository_owner"],
+                        ReviewJob.repository_name == values["repository_name"],
+                        ReviewJob.pull_request_number == values["pull_request_number"],
+                        ReviewJob.head_sha != values["head_sha"],
+                    )
+                    .values(
+                        status=JobStatus.SKIPPED,
+                        error_code="SUPERSEDED",
+                        error_message="Superseded by a newer pull request head",
+                        superseded_by_head_sha=values["head_sha"],
+                        finished_at=datetime.now(UTC),
+                    )
+                )
             await self.session.commit()
             await self.session.refresh(job)
             return job, True
@@ -103,17 +121,42 @@ class JobRepository:
         job.finished_at = datetime.now(UTC)
         await self.session.commit()
 
-    async def retry(self, job_id: int) -> bool:
+    async def retry(self, job_id: int) -> ReviewJob | None:
         job = await self.session.get(ReviewJob, job_id)
         if not job or job.status not in {JobStatus.FAILED, JobStatus.SKIPPED}:
-            return False
-        job.status = JobStatus.PENDING
-        job.trigger_type = TriggerType.RETRY
-        job.finished_at = None
-        job.error_code = None
-        job.error_message = None
+            return None
+        already_succeeded = await self.session.scalar(
+            select(ReviewJob.id).where(
+                ReviewJob.repository_owner == job.repository_owner,
+                ReviewJob.repository_name == job.repository_name,
+                ReviewJob.pull_request_number == job.pull_request_number,
+                ReviewJob.head_sha == job.head_sha,
+                ReviewJob.status == JobStatus.SUCCEEDED,
+            )
+        )
+        if already_succeeded is not None:
+            return None
+        existing_retry = await self.session.scalar(
+            select(ReviewJob).where(ReviewJob.retry_of_job_id == job.id).limit(1)
+        )
+        if existing_retry is not None:
+            return existing_retry
+        retry = ReviewJob(
+            delivery_id=f"admin-retry:{job.id}:{datetime.now(UTC).timestamp():.6f}",
+            source_comment_id=None,
+            installation_id=job.installation_id,
+            repository_owner=job.repository_owner,
+            repository_name=job.repository_name,
+            pull_request_number=job.pull_request_number,
+            base_sha=job.base_sha,
+            head_sha=job.head_sha,
+            trigger_type=TriggerType.RETRY,
+            retry_of_job_id=job.id,
+        )
+        self.session.add(retry)
         await self.session.commit()
-        return True
+        await self.session.refresh(retry)
+        return retry
 
     async def get_or_create_failure_notice(
         self, job: ReviewJob, error_category: str

@@ -118,6 +118,9 @@ def validate_findings_with_diagnostics(
     include_low: bool,
     max_findings: int,
     existing_fingerprints: set[str] | None = None,
+    minimum_severity: str = "LOW",
+    enabled_categories: tuple[str, ...] = (),
+    review_profile: str = "BALANCED",
 ) -> FindingValidationResult:
     existing = existing_fingerprints or set()
     accepted: list[Finding] = []
@@ -128,6 +131,7 @@ def validate_findings_with_diagnostics(
     severity_count = 0
     evidence_count = 0
     deduplicated_count = 0
+    minimum_order = ORDER[Severity(minimum_severity)]
     for finding in findings:
         try:
             finding.path = normalize_path(finding.path)
@@ -145,6 +149,16 @@ def validate_findings_with_diagnostics(
             continue
         confidence_count += 1
         if finding.severity == Severity.LOW and not include_low:
+            continue
+        if ORDER[finding.severity] < minimum_order:
+            continue
+        if enabled_categories and finding.category.value not in enabled_categories:
+            continue
+        if review_profile == "CONSERVATIVE" and finding.category in {
+            Category.PERFORMANCE,
+            Category.SIMPLIFICATION,
+            Category.TESTING,
+        }:
             continue
         severity_count += 1
         if not _has_policy_evidence(finding):

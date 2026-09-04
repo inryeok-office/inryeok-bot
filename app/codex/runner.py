@@ -80,14 +80,18 @@ def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> Cod
 
 
 class ReviewRunner(Protocol):
-    async def run(self, checkout: Path, prompt: str) -> ReviewOutput: ...
+    async def run(
+        self, checkout: Path, prompt: str, model: str | None = None, timeout: int | None = None
+    ) -> ReviewOutput: ...
 
 
 class FakeRunner:
     def __init__(self, output: ReviewOutput) -> None:
         self.output = output
 
-    async def run(self, checkout: Path, prompt: str) -> ReviewOutput:
+    async def run(
+        self, checkout: Path, prompt: str, model: str | None = None, timeout: int | None = None
+    ) -> ReviewOutput:
         return self.output
 
 
@@ -98,7 +102,9 @@ class CodexRunner:
         self.settings = settings
         self.schema_path = schema_path.resolve()
 
-    async def run(self, checkout: Path, prompt: str) -> ReviewOutput:
+    async def run(
+        self, checkout: Path, prompt: str, model: str | None = None, timeout: int | None = None
+    ) -> ReviewOutput:
         command = [
             self.settings.codex_command,
             "exec",
@@ -113,6 +119,10 @@ class CodexRunner:
             str(self.schema_path),
             "-",
         ]
+        if model:
+            if model not in self.settings.allowed_codex_models:
+                raise CodexError("CODEX_MODEL_NOT_ALLOWED", "Codex model is not allowed")
+            command[2:2] = ["--model", model]
         safe_environment = {
             "PATH",
             "HOME",
@@ -144,7 +154,7 @@ class CodexRunner:
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(prompt.encode()),
-                    timeout=self.settings.review_timeout_seconds,
+                    timeout=timeout or self.settings.review_timeout_seconds,
                 )
             except TimeoutError as exc:
                 process.kill()

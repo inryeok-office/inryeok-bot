@@ -67,6 +67,29 @@ async def test_claim_order_and_stale_recovery(app_client):
 
 
 @pytest.mark.asyncio
+async def test_retry_creates_a_new_job_without_rewriting_failure(app_client) -> None:
+    _, factory = app_client
+    async with factory() as session:
+        failed = ReviewJob(
+            delivery_id="failed-for-retry",
+            installation_id=1,
+            repository_owner="o",
+            repository_name="r",
+            pull_request_number=3,
+            base_sha="a" * 40,
+            head_sha="d" * 40,
+            trigger_type=TriggerType.AUTO,
+            status=JobStatus.FAILED,
+        )
+        session.add(failed)
+        await session.commit()
+        retry = await JobRepository(session).retry(failed.id)
+        await session.refresh(failed)
+        assert retry and retry.id != failed.id and retry.retry_of_job_id == failed.id
+        assert failed.status == JobStatus.FAILED
+
+
+@pytest.mark.asyncio
 async def test_error_finish_rolls_back_failed_transaction(app_client):
     _, factory = app_client
     async with factory() as session:

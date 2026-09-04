@@ -6,10 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.codex.prompt import build_prompt
 from app.codex.runner import ReviewRunner
 from app.github.client import GitHubClient
-from app.jobs.models import FindingRecord, RepositorySettings, ReviewJob, ReviewRun, TriggerType
+from app.jobs.models import (
+    FindingRecord,
+    GlobalReviewSettings,
+    RepositorySettings,
+    ReviewJob,
+    ReviewRun,
+    TriggerType,
+)
 from app.review.deduplicator import fingerprint
 from app.review.diff import RepositoryCheckout
 from app.review.publisher import build_review_payload
+from app.review.settings import EffectiveReviewSettings, resolve
 from app.review.validator import validate_findings_with_diagnostics
 
 logger = logging.getLogger(__name__)
@@ -33,13 +41,25 @@ class ReviewService:
                 RepositorySettings.repository_name == job.repository_name,
             )
         )
-        if config is None or not config.enabled or not config.installed:
+        global_settings = await self.session.get(GlobalReviewSettings, 1)
+        if global_settings is None:
+            global_settings = GlobalReviewSettings(id=1)
+            self.session.add(global_settings)
+            await self.session.flush()
+        if config is None:
             raise ReviewSkipped("repository is disabled")
-        patterns = [line.strip() for line in config.ignore_patterns.splitlines() if line.strip()]
-        await self._execute_checkout(job, config, patterns)
+        effective = resolve(global_settings, config, self.github.settings)
+        if not effective.enabled:
+            raise ReviewSkipped("repository is disabled")
+        patterns = list(effective.ignored_paths)
+        await self._execute_checkout(job, config, patterns, effective)
 
     async def _execute_checkout(
-        self, job: ReviewJob, config: RepositorySettings, patterns: list[str]
+        self,
+        job: ReviewJob,
+        config: RepositorySettings,
+        patterns: list[str],
+        effective: EffectiveReviewSettings,
     ) -> int:
         token = await self.github.tokens.get(job.installation_id)
         manager = RepositoryCheckout(
@@ -52,14 +72,20 @@ class ReviewService:
                 job.head_sha,
                 list(changed),
                 {
-                    "min_confidence": config.min_confidence,
-                    "max_findings": config.max_findings,
-                    "include_low_severity": config.include_low_severity,
+                    "min_confidence": effective.minimum_confidence,
+                    "max_findings": effective.max_findings,
+                    "include_low_severity": effective.include_low_severity,
+                    "language": effective.language,
+                    "review_profile": effective.review_profile,
+                    "minimum_severity": effective.minimum_severity,
+                    "enabled_categories": effective.enabled_categories,
                     "ignore_patterns": patterns,
                 },
                 manager.diff_text,
             )
-            output = await self.runner.run(checkout, prompt)
+            output = await self.runner.run(
+                checkout, prompt, effective.model, effective.codex_timeout_seconds
+            )
         existing = set(
             (
                 await self.session.scalars(
@@ -77,10 +103,13 @@ class ReviewService:
         validation = validate_findings_with_diagnostics(
             output.findings,
             changed,
-            config.min_confidence,
-            config.include_low_severity,
-            config.max_findings,
+            effective.minimum_confidence,
+            effective.include_low_severity,
+            effective.max_findings,
             existing,
+            effective.minimum_severity,
+            effective.enabled_categories,
+            effective.review_profile,
         )
         findings = validation.findings
         changed_lines_count = sum(len(file.added_lines) for file in changed.values())
@@ -142,7 +171,11 @@ class ReviewService:
             )
         if previous_auto_summary is None:
             payload = build_review_payload(
-                findings, len(changed), job.head_sha, job.trigger_type == TriggerType.RETRY
+                findings,
+                len(changed),
+                job.head_sha,
+                job.trigger_type == TriggerType.RETRY,
+                effective.language,
             )
             posted = await self.github.create_review(
                 job.installation_id,
