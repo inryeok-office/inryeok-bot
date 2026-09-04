@@ -16,6 +16,7 @@ from app.jobs.models import (
 )
 from app.review.deduplicator import fingerprint
 from app.review.diff import RepositoryCheckout
+from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
 from app.review.publisher import build_review_payload
 from app.review.settings import EffectiveReviewSettings, resolve
 from app.review.validator import validate_findings_with_diagnostics
@@ -67,6 +68,15 @@ class ReviewService:
         )
         async with manager as checkout:
             changed = await manager.fetch_and_diff(job.base_sha, job.head_sha, patterns)
+            detection = detect_domains(list(changed))
+            domains = effective_domains(
+                effective.review_domain_mode, effective.manual_review_domains, detection
+            )
+            job.detected_review_domains = ",".join(detection.domains)
+            job.effective_review_domains = ",".join(domains)
+            job.detection_reasons = "\n".join(detection.reasons)[:2000]
+            job.prompt_version = PROMPT_VERSION
+            await self.session.flush()
             prompt = build_prompt(
                 job.base_sha,
                 job.head_sha,
@@ -79,6 +89,8 @@ class ReviewService:
                     "review_profile": effective.review_profile,
                     "minimum_severity": effective.minimum_severity,
                     "enabled_categories": effective.enabled_categories,
+                    "review_domains": domains,
+                    "prompt_version": PROMPT_VERSION,
                     "ignore_patterns": patterns,
                 },
                 manager.diff_text,

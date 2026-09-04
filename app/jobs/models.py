@@ -47,6 +47,22 @@ class ReviewProfile(StrEnum):
     THOROUGH = "THOROUGH"
 
 
+class ReviewDomainMode(StrEnum):
+    AUTO = "AUTO"
+    MANUAL = "MANUAL"
+
+
+class ReviewDomain(StrEnum):
+    GENERAL = "GENERAL"
+    BACKEND = "BACKEND"
+    WEB_FRONTEND = "WEB_FRONTEND"
+    MOBILE = "MOBILE"
+    INFRASTRUCTURE = "INFRASTRUCTURE"
+    DATABASE = "DATABASE"
+    DATA_AI = "DATA_AI"
+    LIBRARY_SDK_CLI = "LIBRARY_SDK_CLI"
+
+
 class ReviewJob(Base):
     __tablename__ = "review_jobs"
     __table_args__ = (
@@ -86,6 +102,10 @@ class ReviewJob(Base):
     github_check_run_id: Mapped[int | None] = mapped_column(BigInteger)
     retry_of_job_id: Mapped[int | None] = mapped_column(ForeignKey("review_jobs.id"))
     superseded_by_head_sha: Mapped[str | None] = mapped_column(String(64))
+    detected_review_domains: Mapped[str | None] = mapped_column(Text)
+    effective_review_domains: Mapped[str | None] = mapped_column(Text)
+    detection_reasons: Mapped[str | None] = mapped_column(Text)
+    prompt_version: Mapped[str | None] = mapped_column(String(32))
     runs: Mapped[list["ReviewRun"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
@@ -133,6 +153,8 @@ class RepositorySettings(Base):
     override_review_on_reopened: Mapped[bool | None] = mapped_column(Boolean)
     override_review_on_ready_for_review: Mapped[bool | None] = mapped_column(Boolean)
     override_review_on_synchronize: Mapped[bool | None] = mapped_column(Boolean)
+    override_review_domain_mode: Mapped[str | None] = mapped_column(String(16))
+    override_manual_review_domains: Mapped[str | None] = mapped_column(Text)
 
 
 class GlobalReviewSettings(Base):
@@ -155,6 +177,8 @@ class GlobalReviewSettings(Base):
     review_on_ready_for_review: Mapped[bool] = mapped_column(Boolean, default=True)
     review_on_synchronize: Mapped[bool] = mapped_column(Boolean, default=True)
     codex_timeout_seconds: Mapped[int] = mapped_column(Integer, default=900)
+    review_domain_mode: Mapped[str] = mapped_column(String(16), default=ReviewDomainMode.AUTO.value)
+    manual_review_domains: Mapped[str] = mapped_column(Text, default="")
     updated_by: Mapped[str | None] = mapped_column(String(255))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

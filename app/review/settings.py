@@ -2,7 +2,13 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 
 from app.config import Settings
-from app.jobs.models import GlobalReviewSettings, RepositorySettings, ReviewLanguage, ReviewProfile
+from app.jobs.models import (
+    GlobalReviewSettings,
+    RepositorySettings,
+    ReviewDomainMode,
+    ReviewLanguage,
+    ReviewProfile,
+)
 
 MAX_FINDINGS = 50
 MIN_CONFIDENCE = 0.8
@@ -28,6 +34,8 @@ class EffectiveReviewSettings:
     review_on_reopened: bool
     review_on_ready_for_review: bool
     review_on_synchronize: bool
+    review_domain_mode: str
+    manual_review_domains: str
 
 
 def validate_choice(language: str, profile: str, model: str | None, settings: Settings) -> None:
@@ -90,6 +98,11 @@ def resolve(
     categories = choose(
         repository.override_enabled_categories, global_settings.enabled_categories or ""
     )
+    domain_mode = choose(
+        repository.override_review_domain_mode, global_settings.review_domain_mode or "AUTO"
+    )
+    if domain_mode not in {item.value for item in ReviewDomainMode}:
+        raise ValueError("unsupported review domain mode")
     return EffectiveReviewSettings(
         # Keep the existing repository switches as a defensive lower bound.
         # An older repository row marked disabled must never become active merely
@@ -132,6 +145,10 @@ def resolve(
         ),
         review_on_synchronize=choose(
             repository.override_review_on_synchronize, global_settings.review_on_synchronize
+        ),
+        review_domain_mode=domain_mode,
+        manual_review_domains=choose(
+            repository.override_manual_review_domains, global_settings.manual_review_domains or ""
         ),
     )
 
