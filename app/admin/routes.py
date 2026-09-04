@@ -373,6 +373,12 @@ async def update_repository(
     override_include_low_severity: str = Form("inherit"),
     override_ignored_paths: str = Form(""),
     override_timeout_seconds: str = Form(""),
+    override_minimum_severity: str = Form(""),
+    override_enabled_categories: str = Form(""),
+    override_review_on_opened: str = Form("inherit"),
+    override_review_on_reopened: str = Form("inherit"),
+    override_review_on_ready_for_review: str = Form("inherit"),
+    override_review_on_synchronize: str = Form("inherit"),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     principal: AdminPrincipal = Depends(require_admin),
@@ -412,6 +418,21 @@ async def update_repository(
         if repository.override_ignored_paths is not None:
             validate_paths(repository.override_ignored_paths)
         repository.override_timeout_seconds = _optional_int(override_timeout_seconds, 30, 3600)
+        if override_minimum_severity and override_minimum_severity not in {
+            "CRITICAL",
+            "HIGH",
+            "MEDIUM",
+            "LOW",
+        }:
+            raise ValueError("unsupported minimum severity")
+        repository.override_minimum_severity = override_minimum_severity or None
+        repository.override_enabled_categories = override_enabled_categories or None
+        repository.override_review_on_opened = _optional_bool(override_review_on_opened)
+        repository.override_review_on_reopened = _optional_bool(override_review_on_reopened)
+        repository.override_review_on_ready_for_review = _optional_bool(
+            override_review_on_ready_for_review
+        )
+        repository.override_review_on_synchronize = _optional_bool(override_review_on_synchronize)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     session.add(
