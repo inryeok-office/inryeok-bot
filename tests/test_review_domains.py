@@ -8,6 +8,7 @@ from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
     ("files", "expected"),
     [
         (["src/main/kotlin/App.kt", "build.gradle.kts"], "BACKEND"),
+        (["api/routes/users.py"], "BACKEND"),
         (["package.json", "src/App.tsx"], "WEB_FRONTEND"),
         (["pubspec.yaml", "lib/main.dart"], "MOBILE"),
         (["Dockerfile", "infra/main.tf"], "INFRASTRUCTURE"),

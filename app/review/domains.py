@@ -28,11 +28,15 @@ def detect_domains(files: list[str]) -> DomainDetection:
             domains.append(domain.value)
             reasons.append(f"{domain.value}: {reason}")
 
-    if _has(paths, "build.gradle", "build.gradle.kts", "pom.xml") or suffixes & {
-        ".kt",
-        ".java",
-        ".go",
-    }:
+    backend_paths = {"api", "backend", "server", "service", "services", "router", "routes"}
+    if (
+        _has(paths, "build.gradle", "build.gradle.kts", "pom.xml")
+        or suffixes & {".kt", ".java", ".go"}
+        or any(
+            PurePosixPath(path).suffix == ".py" and backend_paths & set(PurePosixPath(path).parts)
+            for path in paths
+        )
+    ):
         add(ReviewDomain.BACKEND, "server build or source changes")
     if (
         suffixes & {".tsx", ".jsx", ".vue", ".svelte"}
