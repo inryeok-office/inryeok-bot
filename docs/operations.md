@@ -1,7 +1,7 @@
 # Operations
 
 The GitHub App works after installation with the global review defaults.
-Repository settings in the administrator dashboard override only fields that are set.
+Repository settings in the admin dashboard override only fields that are set.
 Unset overrides inherit the global value.
 
 Profiles are conservative, balanced (the default), and thorough. They change the
@@ -15,7 +15,8 @@ Administrators sign in with GitHub and must have repository admin permission.
 
 ## Database backup and restore
 
-Create a Git-ignored `backups` directory, then run the following from the Compose project.
+Create a Git-ignored `backups` directory in the Compose project.
+Then run the following command.
 It uses container environment variables instead of a password on the command line.
 
 ```powershell
