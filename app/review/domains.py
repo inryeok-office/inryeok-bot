@@ -72,7 +72,7 @@ def detect_domains(files: list[str]) -> DomainDetection:
 
 
 def effective_domains(
-    mode: str, manual_domains: str | None, detected: DomainDetection
+    mode: str, manual_domains: str | None, detected: DomainDetection | None
 ) -> tuple[str, ...]:
     if mode == ReviewDomainMode.MANUAL.value:
         selected = tuple(
@@ -83,6 +83,7 @@ def effective_domains(
         ):
             raise ValueError("manual domains must contain supported domains")
         return tuple(dict.fromkeys((ReviewDomain.GENERAL.value, *selected)))
+    assert detected is not None
     return detected.domains
 
 

@@ -11,8 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.admin.auth import AdminPrincipal, csrf_token, require_admin, verify_csrf
 from app.config import Settings, get_settings
 from app.db.session import get_session
-from app.jobs.models import AdminAuditLog, GlobalReviewSettings, RepositorySettings, ReviewJob
+from app.jobs.models import (
+    AdminAuditLog,
+    GlobalReviewSettings,
+    RepositorySettings,
+    ReviewDomain,
+    ReviewJob,
+)
 from app.jobs.repository import JobRepository
+from app.review.domains import PROMPT_VERSION, effective_domains
 from app.review.settings import resolve, validate_choice, validate_paths
 
 router = APIRouter(prefix="/admin")
@@ -222,6 +229,8 @@ async def repository_detail(
             repository=repository,
             effective=resolve(global_settings, repository, settings),
             models=settings.allowed_codex_models,
+            domains=[item.value for item in ReviewDomain],
+            prompt_version=PROMPT_VERSION,
         ),
     )
 
@@ -247,6 +256,8 @@ async def global_settings_page(
             settings,
             global_settings=value,
             models=settings.allowed_codex_models,
+            domains=[item.value for item in ReviewDomain],
+            prompt_version=PROMPT_VERSION,
         ),
     )
 
@@ -288,6 +299,8 @@ async def update_global_settings(
     review_on_reopened: bool = Form(False),
     review_on_ready_for_review: bool = Form(False),
     review_on_synchronize: bool = Form(False),
+    review_domain_mode: str = Form("AUTO"),
+    manual_review_domains: list[str] = Form([]),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     principal: AdminPrincipal = Depends(require_admin),
@@ -298,6 +311,10 @@ async def update_global_settings(
         if minimum_severity.upper() not in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}:
             raise ValueError("unsupported minimum severity")
         validate_paths(ignored_paths)
+        if review_domain_mode == "MANUAL":
+            effective_domains(review_domain_mode, ",".join(manual_review_domains), None)
+        elif review_domain_mode != "AUTO":
+            raise ValueError("unsupported review domain mode")
         if (
             not 0.8 <= minimum_confidence <= 1
             or not 1 <= max_findings <= 50
@@ -326,6 +343,8 @@ async def update_global_settings(
     )
     value.minimum_severity = minimum_severity.upper()
     value.enabled_categories = enabled_categories
+    value.review_domain_mode = review_domain_mode
+    value.manual_review_domains = ",".join(manual_review_domains)
     (
         value.review_on_opened,
         value.review_on_reopened,
@@ -379,6 +398,8 @@ async def update_repository(
     override_review_on_reopened: str = Form("inherit"),
     override_review_on_ready_for_review: str = Form("inherit"),
     override_review_on_synchronize: str = Form("inherit"),
+    override_review_domain_mode: str = Form("inherit"),
+    override_manual_review_domains: list[str] = Form([]),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     principal: AdminPrincipal = Depends(require_admin),
@@ -433,6 +454,14 @@ async def update_repository(
             override_review_on_ready_for_review
         )
         repository.override_review_on_synchronize = _optional_bool(override_review_on_synchronize)
+        if override_review_domain_mode not in {"inherit", "AUTO", "MANUAL"}:
+            raise ValueError("unsupported review domain mode")
+        repository.override_review_domain_mode = (
+            None if override_review_domain_mode == "inherit" else override_review_domain_mode
+        )
+        repository.override_manual_review_domains = ",".join(override_manual_review_domains) or None
+        if repository.override_review_domain_mode == "MANUAL":
+            effective_domains("MANUAL", repository.override_manual_review_domains, None)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     session.add(
