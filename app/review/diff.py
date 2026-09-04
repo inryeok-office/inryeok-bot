@@ -124,6 +124,7 @@ class RepositoryCheckout:
             raise DiffError("invalid repository identifier")
         self.settings, self.owner, self.repo, self.token = settings, owner, repo, token
         self.path: Path | None = None
+        self.diff_text = ""
 
     async def __aenter__(self) -> Path:
         self.settings.work_root.mkdir(parents=True, exist_ok=True)
@@ -182,6 +183,7 @@ class RepositoryCheckout:
             env=env,
             max_bytes=self.settings.max_diff_bytes,
         )
+        self.diff_text = output
         files = parse_unified_diff(output, patterns)
         if len(files) > self.settings.max_changed_files:
             raise DiffError("changed file limit exceeded")

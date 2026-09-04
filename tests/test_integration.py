@@ -31,6 +31,7 @@ class FakeGitHub:
 
 class FakeCheckout:
     diff_arguments: tuple[object, ...] = ()
+    diff_text = "diff --git a/app.py b/app.py\n@@ -1 +1 @@\n-old\n+new"
 
     def __init__(self, *_: object) -> None:
         self.path = Path(".")
@@ -93,6 +94,10 @@ async def test_fake_end_to_end_worker_pipeline(app_client, monkeypatch) -> None:
         await ReviewService(session, github, FakeRunner(output)).execute(job)  # type: ignore[arg-type]
         run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == job.id))
         assert run and run.finding_count == 1 and run.github_review_id == 5_107_673_581
+        assert run.raw_findings_count == 1
+        assert run.changed_file_findings_count == 1
+        assert run.changed_line_findings_count == 1
+        assert run.published_findings_count == 1
         assert github.payload["comments"][0]["side"] == "RIGHT"
         assert "\uac80\ud1a0\ud588" in github.payload["body"]
         assert FakeCheckout.diff_arguments[:2] == ("a" * 40, "b" * 40)

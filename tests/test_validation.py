@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from app.codex.schemas import Category, Finding, ReviewOutput, Severity
 from app.review.deduplicator import fingerprint
 from app.review.diff import ChangedFile
-from app.review.validator import validate_findings
+from app.review.validator import validate_findings, validate_findings_with_diagnostics
 
 
 def finding(**changes):
@@ -79,3 +79,26 @@ def test_unchanged_line_low_default_and_existing_fingerprint_are_removed():
     duplicate = finding()
     items = [duplicate, finding(line=3, severity=Severity.LOW, title="Low"), finding(line=99)]
     assert validate_findings(items, changed, 0.9, False, 10, {fingerprint(duplicate)}) == []
+
+
+def test_validation_diagnostics_explain_each_filter_stage():
+    changed = {"app.py": ChangedFile("app.py", frozenset({2, 3, 4}))}
+    result = validate_findings_with_diagnostics(
+        [
+            finding(line=99, title="Unchanged"),
+            finding(line=2, confidence=0.5, title="Low confidence"),
+            finding(line=3, severity=Severity.LOW, title="Low severity"),
+            finding(line=4, title="Accepted"),
+        ],
+        changed,
+        0.9,
+        False,
+        10,
+    )
+    assert result.changed_file_count == 4
+    assert result.changed_line_count == 3
+    assert result.confidence_count == 2
+    assert result.severity_count == 1
+    assert result.evidence_count == 1
+    assert result.deduplicated_count == 1
+    assert result.published_count == 1

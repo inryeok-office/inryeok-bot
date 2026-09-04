@@ -115,6 +115,19 @@ class ReviewRun(Base):
     github_review_id: Mapped[int | None] = mapped_column(BigInteger)
     reviewed_file_count: Mapped[int]
     finding_count: Mapped[int]
+    changed_files_count: Mapped[int] = mapped_column(Integer, default=0)
+    changed_lines_count: Mapped[int] = mapped_column(Integer, default=0)
+    codex_exit_code: Mapped[int | None] = mapped_column(Integer)
+    codex_output_present: Mapped[bool] = mapped_column(Boolean, default=False)
+    raw_findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    schema_valid_findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    changed_file_findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    changed_line_findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    confidence_findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    severity_findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    evidence_findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    deduplicated_findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    published_findings_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     job: Mapped[ReviewJob] = relationship(back_populates="runs")
     findings: Mapped[list["FindingRecord"]] = relationship(

@@ -60,11 +60,13 @@ class FakeProcess:
 async def test_codex_runner_uses_read_only_structured_exec(monkeypatch, tmp_path) -> None:
     captured: tuple[object, ...] = ()
     captured_env: dict[str, str] = {}
+    captured_cwd = None
 
     async def create(*args: object, **kwargs: object) -> FakeProcess:
-        nonlocal captured, captured_env
+        nonlocal captured, captured_cwd, captured_env
         captured = args
         captured_env = kwargs["env"]  # type: ignore[assignment]
+        captured_cwd = kwargs["cwd"]
         return FakeProcess()
 
     monkeypatch.setattr("app.codex.runner.asyncio.create_subprocess_exec", create)
@@ -78,6 +80,7 @@ async def test_codex_runner_uses_read_only_structured_exec(monkeypatch, tmp_path
     assert (
         "read-only" in captured and "--output-schema" in captured and "--ignore-rules" in captured
     )
+    assert captured_cwd == tmp_path
     assert "GITHUB_WEBHOOK_SECRET" not in captured_env
 
 

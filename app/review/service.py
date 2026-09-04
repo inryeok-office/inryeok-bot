@@ -1,3 +1,5 @@
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,7 +10,9 @@ from app.jobs.models import FindingRecord, RepositorySettings, ReviewJob, Review
 from app.review.deduplicator import fingerprint
 from app.review.diff import RepositoryCheckout
 from app.review.publisher import build_review_payload
-from app.review.validator import validate_findings
+from app.review.validator import validate_findings_with_diagnostics
+
+logger = logging.getLogger(__name__)
 
 
 class ReviewSkipped(RuntimeError):
@@ -53,6 +57,7 @@ class ReviewService:
                     "include_low_severity": config.include_low_severity,
                     "ignore_patterns": patterns,
                 },
+                manager.diff_text,
             )
             output = await self.runner.run(checkout, prompt)
         existing = set(
@@ -69,7 +74,7 @@ class ReviewService:
                 )
             ).all()
         )
-        findings = validate_findings(
+        validation = validate_findings_with_diagnostics(
             output.findings,
             changed,
             config.min_confidence,
@@ -77,6 +82,8 @@ class ReviewService:
             config.max_findings,
             existing,
         )
+        findings = validation.findings
+        changed_lines_count = sum(len(file.added_lines) for file in changed.values())
         run = ReviewRun(
             job_id=job.id,
             base_sha=job.base_sha,
@@ -84,7 +91,36 @@ class ReviewService:
             summary=output.summary,
             reviewed_file_count=len(changed),
             finding_count=len(findings),
+            changed_files_count=len(changed),
+            changed_lines_count=changed_lines_count,
+            codex_exit_code=0,
+            codex_output_present=True,
+            raw_findings_count=len(output.findings),
+            schema_valid_findings_count=len(output.findings),
+            changed_file_findings_count=validation.changed_file_count,
+            changed_line_findings_count=validation.changed_line_count,
+            confidence_findings_count=validation.confidence_count,
+            severity_findings_count=validation.severity_count,
+            evidence_findings_count=validation.evidence_count,
+            deduplicated_findings_count=validation.deduplicated_count,
+            published_findings_count=validation.published_count,
             github_review_id=None,
+        )
+        logger.info(
+            "Review diagnostics job=%s files=%s lines=%s raw=%s schema=%s changed_file=%s "
+            "changed_line=%s confidence=%s severity=%s evidence=%s deduplicated=%s published=%s",
+            job.id,
+            len(changed),
+            changed_lines_count,
+            len(output.findings),
+            len(output.findings),
+            validation.changed_file_count,
+            validation.changed_line_count,
+            validation.confidence_count,
+            validation.severity_count,
+            validation.evidence_count,
+            validation.deduplicated_count,
+            validation.published_count,
         )
         self.session.add(run)
         await self.session.flush()
