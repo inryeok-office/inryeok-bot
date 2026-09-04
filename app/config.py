@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     admin_local_bypass: bool = False
     worker_poll_seconds: float = Field(2.0, ge=0.1)
     worker_max_attempts: int = Field(3, ge=1, le=10)
+    max_pending_jobs: int = Field(100, ge=1, le=10_000)
+    max_repository_pending_jobs: int = Field(10, ge=1, le=1_000)
     stale_running_seconds: int = Field(1800, ge=60)
     codex_model_allowlist: str = ""
     default_review_language: str = "ko"

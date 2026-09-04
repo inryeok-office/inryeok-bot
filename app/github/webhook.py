@@ -13,7 +13,7 @@ from app.github.client import GitHubClient
 from app.github.schemas import IssueCommentEvent, PullRequestEvent, is_review_command
 from app.github.verifier import verify_signature
 from app.jobs.models import GlobalReviewSettings, RepositorySettings, TriggerType, WebhookDelivery
-from app.jobs.repository import JobRepository
+from app.jobs.repository import JobRepository, QueueCapacityError
 from app.review.settings import EffectiveReviewSettings, resolve
 
 router = APIRouter()
@@ -282,17 +282,23 @@ async def github_webhook(
             head_sha = str(raw_pr["head"]["sha"])
             trigger = TriggerType.COMMAND
             source_comment_id = comment_event.comment.id
-        job, created = await JobRepository(session).enqueue(
-            delivery_id=x_github_delivery,
-            installation_id=installation_id,
-            repository_owner=owner,
-            repository_name=repository_name,
-            pull_request_number=pr_number,
-            base_sha=base_sha,
-            head_sha=head_sha,
-            trigger_type=trigger,
-            source_comment_id=source_comment_id,
-        )
+        try:
+            job, created = await JobRepository(session).enqueue(
+                max_pending_jobs=settings.max_pending_jobs,
+                max_repository_pending_jobs=settings.max_repository_pending_jobs,
+                delivery_id=x_github_delivery,
+                installation_id=installation_id,
+                repository_owner=owner,
+                repository_name=repository_name,
+                pull_request_number=pr_number,
+                base_sha=base_sha,
+                head_sha=head_sha,
+                trigger_type=trigger,
+                source_comment_id=source_comment_id,
+            )
+        except QueueCapacityError:
+            await session.rollback()
+            return {"accepted": True, "created": False, "ignored": "queue_capacity"}
         if created and job is not None:
             try:
                 if trigger == TriggerType.AUTO:

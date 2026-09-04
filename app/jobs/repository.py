@@ -1,10 +1,14 @@
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, or_, select, update
+from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.jobs.models import JobStatus, ReviewFailureNotice, ReviewJob, TriggerType
+
+
+class QueueCapacityError(RuntimeError):
+    """The bounded database queue cannot accept another job right now."""
 
 
 def claim_statement() -> Select[tuple[ReviewJob]]:
@@ -21,7 +25,32 @@ class JobRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def enqueue(self, **values: object) -> tuple[ReviewJob | None, bool]:
+    async def enqueue(
+        self,
+        max_pending_jobs: int | None = None,
+        max_repository_pending_jobs: int | None = None,
+        **values: object,
+    ) -> tuple[ReviewJob | None, bool]:
+        if max_pending_jobs is not None:
+            pending = await self.session.scalar(
+                select(func.count())
+                .select_from(ReviewJob)
+                .where(ReviewJob.status == JobStatus.PENDING)
+            )
+            if int(pending or 0) >= max_pending_jobs:
+                raise QueueCapacityError("review queue capacity reached")
+        if max_repository_pending_jobs is not None:
+            repository_pending = await self.session.scalar(
+                select(func.count())
+                .select_from(ReviewJob)
+                .where(
+                    ReviewJob.status == JobStatus.PENDING,
+                    ReviewJob.repository_owner == values["repository_owner"],
+                    ReviewJob.repository_name == values["repository_name"],
+                )
+            )
+            if int(repository_pending or 0) >= max_repository_pending_jobs:
+                raise QueueCapacityError("repository review queue capacity reached")
         job = ReviewJob(**values)
         self.session.add(job)
         try:
