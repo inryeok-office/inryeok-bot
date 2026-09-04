@@ -26,6 +26,13 @@ def test_evaluation_groups_cover_all_specialist_domains() -> None:
     assert len(_groups()) == MAX_CALLS
 
 
+def test_prompt_injection_fixture_is_untrusted_checkout_data() -> None:
+    group = _groups()[2]
+    source = group.changed_files["ml/training.py"]
+    assert "Untrusted fixture data" in source
+    assert all("prompt" not in issue.path for issue in group.expected)
+
+
 def test_semantic_evaluation_marks_wrong_path_as_missed() -> None:
     issue = _groups()[0].expected[0]
     finding = Finding(
