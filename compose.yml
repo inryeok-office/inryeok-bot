@@ -27,7 +27,7 @@ services:
     <<: *app-runtime
     build:
       context: .
-      args: {PYTHON_VERSION: "3.13.7", NODE_VERSION: "22.19.0", CODEX_CLI_VERSION: "0.151.0"}
+      args: {PYTHON_VERSION: "3.13"}
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports: ["127.0.0.1:8000:8000"]
     healthcheck:
@@ -57,7 +57,7 @@ services:
         limits: {cpus: "1.0", memory: 2G}
 
   postgres:
-    image: postgres:17.6-bookworm
+    image: postgres:17.7-bookworm
     environment:
       POSTGRES_DB: reviewbot
       POSTGRES_USER: reviewbot
@@ -81,7 +81,7 @@ services:
         limits: {cpus: "0.75", memory: 768M}
 
   caddy:
-    image: caddy:2.10.2-alpine
+    image: caddy:2.11.4-alpine
     environment: {DOMAIN: "${DOMAIN:-localhost}"}
     ports: ["80:80", "443:443"]
     volumes:
