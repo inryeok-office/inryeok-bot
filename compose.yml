@@ -39,9 +39,13 @@ services:
   worker:
     <<: *app-runtime
     command: ["python", "-m", "app.jobs.worker"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      codex-executor: {condition: service_healthy}
     volumes:
       - codex-auth:/var/lib/codex
       - review-work:/var/lib/review-bot/work
+    networks: [default, executor-net]
     healthcheck:
       test: ["CMD", "python", "-c", "import pathlib,sys;sys.exit(b'app.jobs.worker' not in pathlib.Path('/proc/1/cmdline').read_bytes())"]
       interval: 30s
@@ -50,6 +54,32 @@ services:
     deploy:
       resources:
         limits: {cpus: "1.0", memory: 2G}
+
+  codex-executor:
+    image: inryeok-bot:0.1.0
+    command: ["uvicorn", "app.codex.executor:app", "--host", "0.0.0.0", "--port", "9001"]
+    environment:
+      CODEX_COMMAND: ${CODEX_COMMAND:-codex}
+      CODEX_HOME: /var/lib/codex
+      CODEX_MODEL_ALLOWLIST: ${CODEX_MODEL_ALLOWLIST:-}
+    volumes:
+      - codex-auth:/var/lib/codex
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=512m
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    init: true
+    restart: unless-stopped
+    networks: [executor-net]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 2G, pids: 128}
 
   postgres:
     image: postgres:17.6-bookworm
@@ -111,6 +141,9 @@ volumes:
   review-work:
   caddy-data:
   caddy-config:
+
+networks:
+  executor-net:
 
 secrets:
   github_app_private_key:

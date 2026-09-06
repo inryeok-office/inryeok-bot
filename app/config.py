@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     allow_unlisted_github_accounts: bool = False
     codex_home: Path | None = None
     codex_command: str = "codex"
+    codex_executor_url: str = ""
     work_root: Path = Path("work")
     review_timeout_seconds: int = Field(900, ge=30, le=3600)
     git_timeout_seconds: int = Field(60, ge=5, le=600)

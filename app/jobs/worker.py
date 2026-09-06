@@ -7,7 +7,8 @@ from zoneinfo import ZoneInfo
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.codex.runner import CodexError, CodexRunner
+from app.codex.executor_client import ExecutorRunner
+from app.codex.runner import CodexError
 from app.config import get_settings
 from app.db.session import get_session_factory
 from app.github.client import GitHubAPIError, GitHubClient
@@ -124,7 +125,12 @@ async def run_worker() -> None:
             github: GitHubClient | None = None
             try:
                 github = GitHubClient(settings)
-                await ReviewService(session, github, CodexRunner(settings)).execute(job)
+                if not settings.codex_executor_url:
+                    raise CodexError("EXECUTOR_NOT_CONFIGURED", "Codex executor is not configured")
+                runner = ExecutorRunner(
+                    settings.codex_executor_url, settings.review_timeout_seconds + 60
+                )
+                await ReviewService(session, github, runner).execute(job)
                 await repository.finish(job, JobStatus.SUCCEEDED)
             except ReviewSkipped as exc:
                 await finish_after_error(
