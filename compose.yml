@@ -67,6 +67,9 @@ services:
     init: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    # The official entrypoint needs these capabilities to chown the data
+    # directory and drop privileges to the postgres user during initialization.
+    cap_add: ["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE"]
     logging: *default-logging
     deploy:
       resources:
