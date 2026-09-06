@@ -77,11 +77,37 @@ def run_check(codex: str, root_base: Path) -> int:
                 codex, workspace, "/bin/cat", str(codex_home / "canary")
             ),
             "secrets_read_blocked": _blocked(codex, workspace, "/bin/cat", str(secrets / "canary")),
+            "forbidden_env_absent": _run(
+                codex,
+                workspace,
+                "/bin/sh",
+                "-c",
+                'test -z "${DATABASE_URL+x}${GITHUB_WEBHOOK_SECRET+x}"',
+            ),
             "external_network_blocked": _blocked(
                 codex, workspace, "/usr/bin/curl", "--connect-timeout", "2", "https://example.com"
             ),
             "localhost_blocked": _blocked(
                 codex, workspace, "/usr/bin/curl", "--connect-timeout", "1", "http://127.0.0.1:1"
+            ),
+            "private_network_blocked": _blocked(
+                codex, workspace, "/usr/bin/curl", "--connect-timeout", "1", "http://10.0.0.1:1"
+            ),
+            "metadata_network_blocked": _blocked(
+                codex,
+                workspace,
+                "/usr/bin/curl",
+                "--connect-timeout",
+                "1",
+                "http://169.254.169.254",
+            ),
+            "executor_socket_blocked": _blocked(
+                codex,
+                workspace,
+                "/usr/bin/curl",
+                "--unix-socket",
+                "/run/inryeok-bot/executor.sock",
+                "http://localhost/health",
             ),
         }
         failed = [name for name, passed in checks.items() if not passed]
