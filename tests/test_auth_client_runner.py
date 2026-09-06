@@ -143,7 +143,7 @@ class FakeProcess:
 
 
 @pytest.mark.asyncio
-async def test_codex_runner_uses_read_only_structured_exec(monkeypatch, tmp_path) -> None:
+async def test_codex_runner_uses_managed_read_only_profile(monkeypatch, tmp_path) -> None:
     captured: tuple[object, ...] = ()
     captured_env: dict[str, str] = {}
     captured_cwd = None
@@ -163,9 +163,10 @@ async def test_codex_runner_uses_read_only_structured_exec(monkeypatch, tmp_path
     result = await runner.run(tmp_path, "review this")
     assert result.summary == "ok"
     assert captured[:2] == ("codex", "exec")
-    assert (
-        "read-only" in captured and "--output-schema" in captured and "--ignore-rules" in captured
-    )
+    assert "--output-schema" in captured and "--ignore-rules" in captured
+    assert "--ignore-user-config" in captured
+    assert "--ask-for-approval" in captured and "never" in captured
+    assert 'default_permissions="inryeok_review_read_only"' in captured
     assert captured_cwd == tmp_path
     assert "GITHUB_WEBHOOK_SECRET" not in captured_env
 

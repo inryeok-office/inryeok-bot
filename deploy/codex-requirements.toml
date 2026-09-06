@@ -1,0 +1,22 @@
+# Managed policy for the dedicated executor. Codex 0.138+ reads this on Unix.
+default_permissions = "inryeok_review_read_only"
+allowed_web_search_modes = []
+
+[allowed_permission_profiles]
+inryeok_review_read_only = true
+
+[permissions.inryeok_review_read_only]
+description = "Read-only review of the active workspace without command network access."
+extends = ":read-only"
+
+[permissions.inryeok_review_read_only.filesystem]
+":root" = "deny"
+":minimal" = "read"
+":tmpdir" = "deny"
+":slash_tmp" = "deny"
+
+[permissions.inryeok_review_read_only.filesystem.":workspace_roots"]
+"." = "read"
+
+[permissions.inryeok_review_read_only.network]
+enabled = false

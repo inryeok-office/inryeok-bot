@@ -1,0 +1,34 @@
+[Unit]
+Description=Inryeok Bot Codex executor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=inryeok-executor
+Group=inryeok-worker
+SupplementaryGroups=inryeok-executor
+WorkingDirectory=/opt/inryeok-bot/app
+Environment=CODEX_HOME=/var/lib/inryeok-bot-executor/codex-home
+Environment=CODEX_COMMAND=/usr/local/bin/codex
+Environment=CODEX_MODEL_ALLOWLIST=
+RuntimeDirectory=inryeok-bot
+RuntimeDirectoryMode=0750
+UMask=0007
+ExecStart=/opt/inryeok-bot/executor/venv/bin/uvicorn app.codex.executor:app --uds /run/inryeok-bot/executor.sock
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/inryeok-bot-executor /run/inryeok-bot
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

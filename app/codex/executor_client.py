@@ -4,6 +4,7 @@ import base64
 import io
 import tarfile
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import httpx
 
@@ -55,8 +56,20 @@ class ExecutorRunner(ReviewRunner):
         }
         request_timeout = max(self.timeout, float(timeout or 0) + 30.0)
         try:
-            async with httpx.AsyncClient(timeout=request_timeout) as client:
-                response = await client.post(f"{self.url}/review", json=payload)
+            if self.url.startswith("unix://"):
+                socket_path = unquote(urlparse(self.url).path)
+                if not socket_path.startswith("/"):
+                    raise CodexError(
+                        "EXECUTOR_UNAVAILABLE", "executor socket path is invalid", True
+                    )
+                transport = httpx.AsyncHTTPTransport(uds=socket_path)
+                async with httpx.AsyncClient(
+                    transport=transport, base_url="http://executor", timeout=request_timeout
+                ) as client:
+                    response = await client.post("/review", json=payload)
+            else:
+                async with httpx.AsyncClient(timeout=request_timeout) as client:
+                    response = await client.post(f"{self.url}/review", json=payload)
         except httpx.TimeoutException as exc:
             raise CodexError("CODEX_TIMEOUT", "Codex executor timed out", retryable=True) from exc
         except httpx.HTTPError as exc:
