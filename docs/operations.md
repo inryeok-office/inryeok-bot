@@ -13,6 +13,10 @@ Use a fixed HTTPS `PUBLIC_BASE_URL` for production.
 Cloudflare Quick Tunnels are for development testing only.
 Administrators sign in with GitHub and must have repository admin permission.
 
+Production ingress uses host Nginx with Certbot. Compose Caddy is disabled by
+default and retained only under the `legacy-caddy` profile for rollback; its
+data/config volumes must be preserved.
+
 ## Database backup and restore
 
 Create a Git-ignored `backups` directory in the Compose project.
