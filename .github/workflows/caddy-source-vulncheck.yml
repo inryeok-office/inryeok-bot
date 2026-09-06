@@ -1,0 +1,30 @@
+name: Caddy source vulnerability check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: caddy-source-vulncheck
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c
+    steps:
+      - name: Checkout repository scripts
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run pinned source and binary scan
+        run: bash scripts/caddy_source_vulncheck.sh
+      - name: Upload redacted summary
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: caddy-vuln-summary
+          path: caddy-vuln-summary.md
+          if-no-files-found: error
