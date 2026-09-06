@@ -40,11 +40,14 @@ summary="$GITHUB_WORKSPACE/caddy-vuln-summary.md"
   echo "- peeled commit: $actual"
   echo "- govulncheck: $GOVULNCHECK_VERSION"
   echo "- build: $([ "$build_status" -eq 0 ] && echo PASS || echo FAIL)"
-  echo "- source scan: $([ "$source_status" -eq 0 ] && echo PASS || echo FINDINGS_OR_ERROR)"
-  echo "- binary scan: $([ "$binary_status" -eq 0 ] && echo PASS || echo FINDINGS_OR_ERROR)"
+  echo "- source scan: $([ "$source_text_status" -eq 0 ] && echo PASS || echo FINDINGS_OR_ERROR)"
+  echo "- binary scan: $([ "$binary_text_status" -eq 0 ] && echo PASS || echo FINDINGS_OR_ERROR)"
   echo
   echo "## Advisory identifiers"
   { grep -hoE 'GO-[0-9]{4}-[0-9]+' "$ROOT/out/source.txt" "$ROOT/out/binary.txt" 2>/dev/null || true; } | sort -u | sed 's/^/- /'
+  echo
+  echo "## Safe finding metadata"
+  grep -E '^(Vulnerability #[0-9]+|  More info:|  Module:|    Found in:|    Fixed in:|    Vulnerable symbols found:|      [[:alnum:]_.]+\.)' "$ROOT/out/source.txt" "$ROOT/out/binary.txt" 2>/dev/null | head -n 160 || true
   echo
   echo "The full source tree and module cache are intentionally not retained."
 } >"$summary"
