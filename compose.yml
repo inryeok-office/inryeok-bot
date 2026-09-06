@@ -86,9 +86,10 @@ services:
     depends_on:
       web: {condition: service_healthy}
     healthcheck:
-      # Internal health checks cannot provide the public hostname's TLS SNI.
-      # Accept either a direct response or Caddy's expected HTTP->HTTPS redirect.
-      test: ["CMD-SHELL", "wget --spider --quiet --max-redirect=0 http://localhost/health/live; code=$$?; test $$code -eq 0 -o $$code -eq 8"]
+      # The public hostname is required for Caddy's TLS SNI, which is not
+      # available from an in-container localhost probe. Verify the upstream
+      # health endpoint here and validate the public HTTPS route separately.
+      test: ["CMD", "wget", "--spider", "--quiet", "http://web:8000/health/live"]
       interval: 30s
       timeout: 5s
       retries: 3
