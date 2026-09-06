@@ -1,0 +1,18 @@
+vulnerabilities:
+  - id: CVE-2026-56854
+    purls:
+      - pkg:golang/golang.org/x/crypto@v0.52.0
+    expired_at: 2026-10-07
+    statement: >-
+      Caddy 2.11.4 is used only as an HTTPS reverse proxy and exposes no SSH
+      module or NewServerConn execution path. Recheck when the image digest or
+      Caddy configuration changes, and when the exception expires.
+
+secrets:
+  - id: private-key
+    paths:
+      - /etc/ssl/private/ssl-cert-snakeoil.key
+    expired_at: 2026-10-07
+    statement: >-
+      Official PostgreSQL Debian image snakeoil sample key; not referenced by
+      PostgreSQL runtime configuration and not an operational credential.
