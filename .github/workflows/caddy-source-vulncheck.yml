@@ -1,4 +1,4 @@
-name: Caddy source vulnerability check
+name: Legacy Caddy source vulnerability check (manual)
 
 on:
   workflow_dispatch:
