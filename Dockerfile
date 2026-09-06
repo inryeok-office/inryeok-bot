@@ -11,7 +11,12 @@ COPY migrations ./migrations
 COPY alembic.ini review-schema.json ./
 COPY prompts ./prompts
 COPY scripts ./scripts
-RUN pip install --no-cache-dir . && mkdir -p /var/lib/review-bot/work /var/lib/codex && chown -R reviewbot:reviewbot /app /var/lib/review-bot /var/lib/codex
+RUN pip install --no-cache-dir . \
+    && rm -rf /usr/local/lib/python3.13/site-packages/pip \
+        /usr/local/lib/python3.13/site-packages/pip-*.dist-info \
+        /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.13 \
+    && mkdir -p /var/lib/review-bot/work /var/lib/codex \
+    && chown -R reviewbot:reviewbot /app /var/lib/review-bot /var/lib/codex
 USER reviewbot
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
