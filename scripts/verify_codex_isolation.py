@@ -46,8 +46,11 @@ def _blocked(codex: str, workspace: Path, *command: str) -> bool:
     return not _run(codex, workspace, *command)
 
 
-def run_check(codex: str) -> int:
-    with tempfile.TemporaryDirectory(prefix="inryeok-isolation-") as root_name:
+def run_check(codex: str, root_base: Path) -> int:
+    if not root_base.is_dir() or not os.access(root_base, os.W_OK):
+        print("RESULT=NOT_PROVEN")
+        return 2
+    with tempfile.TemporaryDirectory(prefix="inryeok-isolation-", dir=root_base) as root_name:
         root = Path(root_name)
         workspace = root / "job"
         outside = root / "outside.txt"
@@ -91,5 +94,8 @@ def run_check(codex: str) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--codex", default=shutil.which("codex") or "codex")
+    parser.add_argument(
+        "--root", type=Path, default=Path("/var/lib/inryeok-bot-executor/workspaces")
+    )
     args = parser.parse_args()
-    raise SystemExit(run_check(args.codex))
+    raise SystemExit(run_check(args.codex, args.root))
