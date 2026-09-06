@@ -1,4 +1,5 @@
 # ruff: noqa: E501
+import hashlib
 from collections import Counter
 from typing import Any
 
@@ -16,6 +17,14 @@ _SEVERITY_ICONS = {
     "MEDIUM": "\U0001f7e0",
     "LOW": "\U0001f7e1",
 }
+
+
+def review_marker(
+    owner: str, repository: str, pull_request: int, head_sha: str, prompt_version: str
+) -> str:
+    identity = f"{owner.casefold()}/{repository.casefold()}#{pull_request}:{head_sha}:{prompt_version}:review"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"v2:{digest}"
 
 
 def _inline_text(value: str) -> str:
@@ -45,6 +54,7 @@ def build_review_payload(
     head_sha: str,
     rerun: bool | None = None,
     language: str = "ko",
+    marker: str = "v1",
 ) -> dict[str, Any]:
     counts = Counter(item.severity.value for item in findings)
     table = "\n".join(
@@ -109,7 +119,7 @@ def build_review_payload(
             if english
             else f"\uac80\ud1a0\ud55c head: `{head_sha[:12]}`"
         )
-        + "\n\n<!-- inryeok-review:v1 -->"
+        + f"\n\n<!-- inryeok-review:{marker} -->"
     )
     return {
         "commit_id": head_sha,

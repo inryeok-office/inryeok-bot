@@ -96,6 +96,35 @@ async def test_github_client_retries_rate_limit_with_retry_after() -> None:
     assert request.call_count == 2
 
 
+@respx.mock
+@pytest.mark.asyncio
+async def test_review_listing_paginates_for_marker_lookup() -> None:
+    settings = Settings(environment="test", github_api_url="https://api.github.test")
+    first = [{"id": index, "body": "other"} for index in range(100)]
+    first_route = respx.get(
+        "https://api.github.test/repos/acme/repo/pulls/1/reviews",
+        params={"per_page": "100", "page": "1"},
+    ).mock(return_value=httpx.Response(200, json=first))
+    second_route = respx.get(
+        "https://api.github.test/repos/acme/repo/pulls/1/reviews",
+        params={"per_page": "100", "page": "2"},
+    ).mock(return_value=httpx.Response(200, json=[{"id": 101, "body": "marker"}]))
+    async with httpx.AsyncClient() as http:
+        client = GitHubClient(settings, http)
+
+        class Tokens:
+            async def get(self, installation_id: int) -> str:
+                return "token"
+
+            def invalidate(self, installation_id: int) -> None:
+                pass
+
+        client.tokens = Tokens()  # type: ignore[assignment]
+        reviews = await client.list_reviews(1, "acme", "repo", 1)
+    assert len(reviews) == 101
+    assert first_route.call_count == 1 and second_route.call_count == 1
+
+
 class FakeProcess:
     returncode = 0
 

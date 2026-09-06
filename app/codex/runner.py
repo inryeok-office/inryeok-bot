@@ -240,9 +240,17 @@ class CodexRunner:
             raise CodexError("CODEX_OUTPUT_LIMIT", "Codex output exceeded the safe limit")
         if process.returncode != 0:
             raise classify_codex_failure(process.returncode or 1, stdout, stderr)
+        if not stdout.strip():
+            raise CodexError("CODEX_OUTPUT_MISSING", "Codex returned no structured output")
         try:
-            return ReviewOutput.model_validate(json.loads(stdout))
-        except (json.JSONDecodeError, ValueError) as exc:
+            payload = json.loads(stdout)
+        except json.JSONDecodeError as exc:
             raise CodexError(
-                "CODEX_INVALID_OUTPUT", "Codex returned invalid structured output"
+                "CODEX_OUTPUT_INVALID_JSON", "Codex returned invalid JSON output"
+            ) from exc
+        try:
+            return ReviewOutput.model_validate(payload)
+        except ValueError as exc:
+            raise CodexError(
+                "CODEX_OUTPUT_SCHEMA_MISMATCH", "Codex output did not match the review schema"
             ) from exc

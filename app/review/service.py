@@ -1,11 +1,12 @@
 import logging
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.codex.prompt import build_prompt
 from app.codex.runner import ReviewRunner
-from app.github.client import GitHubClient
+from app.github.client import GitHubAPIError, GitHubClient
 from app.jobs.models import (
     FindingRecord,
     GlobalReviewSettings,
@@ -17,7 +18,7 @@ from app.jobs.models import (
 from app.review.deduplicator import fingerprint
 from app.review.diff import RepositoryCheckout
 from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
-from app.review.publisher import build_review_payload
+from app.review.publisher import build_review_payload, review_marker
 from app.review.settings import EffectiveReviewSettings, resolve
 from app.review.validator import validate_findings_with_diagnostics
 
@@ -182,21 +183,65 @@ class ReviewService:
                 .limit(1)
             )
         if previous_auto_summary is None:
-            payload = build_review_payload(
-                findings,
-                len(changed),
+            marker = review_marker(
+                job.repository_owner,
+                job.repository_name,
+                job.pull_request_number,
                 job.head_sha,
-                job.trigger_type == TriggerType.RETRY,
-                effective.language,
+                PROMPT_VERSION,
             )
-            posted = await self.github.create_review(
+            existing_reviews = await self.github.list_reviews(
                 job.installation_id,
                 job.repository_owner,
                 job.repository_name,
                 job.pull_request_number,
-                payload,
             )
-            run.github_review_id = int(posted["id"])
+            existing_id = next(
+                (
+                    int(review["id"])
+                    for review in existing_reviews
+                    if f"<!-- inryeok-review:{marker} -->" in str(review.get("body", ""))
+                ),
+                None,
+            )
+            if existing_id is not None:
+                run.github_review_id = existing_id
+            else:
+                payload = build_review_payload(
+                    findings,
+                    len(changed),
+                    job.head_sha,
+                    job.trigger_type == TriggerType.RETRY,
+                    effective.language,
+                    marker,
+                )
+                try:
+                    posted = await self.github.create_review(
+                        job.installation_id,
+                        job.repository_owner,
+                        job.repository_name,
+                        job.pull_request_number,
+                        payload,
+                    )
+                except (GitHubAPIError, httpx.TimeoutException, httpx.NetworkError):
+                    recovered_reviews = await self.github.list_reviews(
+                        job.installation_id,
+                        job.repository_owner,
+                        job.repository_name,
+                        job.pull_request_number,
+                    )
+                    recovered_id = next(
+                        (
+                            int(review["id"])
+                            for review in recovered_reviews
+                            if f"<!-- inryeok-review:{marker} -->" in str(review.get("body", ""))
+                        ),
+                        None,
+                    )
+                    if recovered_id is None:
+                        raise
+                    posted = {"id": recovered_id}
+                run.github_review_id = int(posted["id"])
         for finding in findings:
             self.session.add(
                 FindingRecord(

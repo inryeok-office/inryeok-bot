@@ -6,6 +6,7 @@ from sqlalchemy import BigInteger, select
 from app.codex.runner import FakeRunner
 from app.codex.schemas import Category, Finding, ReviewOutput, Severity
 from app.config import Settings
+from app.github.client import GitHubAPIError
 from app.jobs.models import FindingRecord, RepositorySettings, ReviewJob, ReviewRun, TriggerType
 from app.review.diff import ChangedFile
 from app.review.service import ReviewService, ReviewSkipped
@@ -23,6 +24,10 @@ class FakeGitHub:
         )
         self.tokens = Tokens()
         self.payload = None
+        self.reviews: list[dict[str, object]] = []
+
+    async def list_reviews(self, *args: object) -> list[dict[str, object]]:
+        return self.reviews
 
     async def create_review(self, *args: object) -> dict[str, int]:
         self.payload = args[-1]
@@ -212,6 +217,76 @@ async def test_completed_auto_review_summary_is_not_repeated(app_client, monkeyp
             session, github, FakeRunner(ReviewOutput(summary="ok", findings=[]))
         ).execute(retry)  # type: ignore[arg-type]
         assert github.payload is None
+
+
+@pytest.mark.asyncio
+async def test_existing_review_marker_recovers_without_reposting(app_client, monkeypatch) -> None:
+    _, factory = app_client
+    monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
+    async with factory() as session:
+        session.add(
+            RepositorySettings(installation_id=6, repository_owner="acme", repository_name="repo")
+        )
+        job = ReviewJob(
+            delivery_id="marker-recovery",
+            installation_id=6,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=12,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.COMMAND,
+        )
+        session.add(job)
+        await session.commit()
+        github = FakeGitHub()
+        from app.review.publisher import review_marker
+
+        marker = review_marker("acme", "repo", 12, "b" * 40, "domains-v1")
+        github.reviews = [{"id": 9_000_000_001, "body": f"<!-- inryeok-review:{marker} -->"}]
+        await ReviewService(
+            session, github, FakeRunner(ReviewOutput(summary="ok", findings=[]))
+        ).execute(job)  # type: ignore[arg-type]
+        run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == job.id))
+        assert run and run.github_review_id == 9_000_000_001
+        assert github.payload is None
+
+
+@pytest.mark.asyncio
+async def test_review_timeout_rechecks_marker_before_failure(app_client, monkeypatch) -> None:
+    _, factory = app_client
+    monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
+
+    class TimeoutGitHub(FakeGitHub):
+        list_calls = 0
+
+        async def list_reviews(self, *args: object) -> list[dict[str, object]]:
+            self.list_calls += 1
+            return []
+
+        async def create_review(self, *args: object) -> dict[str, int]:
+            raise GitHubAPIError(599, "GITHUB_NETWORK_ERROR")
+
+    async with factory() as session:
+        session.add(
+            RepositorySettings(installation_id=7, repository_owner="acme", repository_name="repo")
+        )
+        job = ReviewJob(
+            delivery_id="marker-timeout",
+            installation_id=7,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=13,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.COMMAND,
+        )
+        session.add(job)
+        await session.commit()
+        with pytest.raises(GitHubAPIError):
+            await ReviewService(
+                session, TimeoutGitHub(), FakeRunner(ReviewOutput(summary="ok", findings=[]))
+            ).execute(job)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
