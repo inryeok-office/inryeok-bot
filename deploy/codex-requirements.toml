@@ -5,6 +5,8 @@ allowed_web_search_modes = []
 [allowed_permission_profiles]
 inryeok_review_read_only = true
 
+[permissions]
+
 [permissions.inryeok_review_read_only]
 description = "Read-only review of the active workspace without command network access."
 extends = ":read-only"
