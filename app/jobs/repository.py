@@ -14,7 +14,10 @@ class QueueCapacityError(RuntimeError):
 def claim_statement() -> Select[tuple[ReviewJob]]:
     return (
         select(ReviewJob)
-        .where(ReviewJob.status == JobStatus.PENDING)
+        .where(
+            ReviewJob.status == JobStatus.PENDING,
+            (ReviewJob.not_before.is_(None) | (ReviewJob.not_before <= datetime.now(UTC))),
+        )
         .order_by(ReviewJob.created_at, ReviewJob.id)
         .with_for_update(skip_locked=True)
         .limit(1)

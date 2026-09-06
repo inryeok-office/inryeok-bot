@@ -45,6 +45,9 @@ def test_repository_null_overrides_inherit_global_defaults() -> None:
     assert effective.model == "approved-model"
     assert effective.max_findings == 8
     assert path_is_ignored("build/output.kt", effective.ignored_paths)
+    assert effective.review_on_synchronize is False
+    assert effective.synchronize_debounce_seconds == 60
+    assert effective.command_cooldown_seconds == 60
 
 
 def test_repository_override_and_safety_bounds_apply() -> None:

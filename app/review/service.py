@@ -113,6 +113,8 @@ class ReviewService:
                 )
             ).all()
         )
+        prior_fingerprints = set(existing)
+        raw_fingerprints = {fingerprint(item) for item in output.findings}
         validation = validate_findings_with_diagnostics(
             output.findings,
             changed,
@@ -211,9 +213,14 @@ class ReviewService:
                     findings,
                     len(changed),
                     job.head_sha,
-                    job.trigger_type == TriggerType.RETRY,
+                    job.trigger_type in {TriggerType.COMMAND, TriggerType.RETRY},
                     effective.language,
                     marker,
+                    {
+                        "new": len(raw_fingerprints - prior_fingerprints),
+                        "still": len(raw_fingerprints & prior_fingerprints),
+                        "not_detected": max(0, len(prior_fingerprints - raw_fingerprints)),
+                    },
                 )
                 try:
                     posted = await self.github.create_review(

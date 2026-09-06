@@ -34,6 +34,8 @@ class EffectiveReviewSettings:
     review_on_reopened: bool
     review_on_ready_for_review: bool
     review_on_synchronize: bool
+    synchronize_debounce_seconds: int
+    command_cooldown_seconds: int
     review_domain_mode: str
     manual_review_domains: str
 
@@ -144,7 +146,30 @@ def resolve(
             global_settings.review_on_ready_for_review,
         ),
         review_on_synchronize=choose(
-            repository.override_review_on_synchronize, global_settings.review_on_synchronize
+            repository.override_review_on_synchronize,
+            global_settings.review_on_synchronize
+            if global_settings.review_on_synchronize is not None
+            else False,
+        ),
+        synchronize_debounce_seconds=min(
+            3600,
+            max(
+                0,
+                choose(
+                    repository.override_synchronize_debounce_seconds,
+                    global_settings.synchronize_debounce_seconds or 60,
+                ),
+            ),
+        ),
+        command_cooldown_seconds=min(
+            3600,
+            max(
+                0,
+                choose(
+                    repository.override_command_cooldown_seconds,
+                    global_settings.command_cooldown_seconds or 60,
+                ),
+            ),
         ),
         review_domain_mode=domain_mode,
         manual_review_domains=choose(

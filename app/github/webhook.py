@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import ValidationError
@@ -12,7 +13,13 @@ from app.db.session import get_session
 from app.github.client import GitHubClient
 from app.github.schemas import IssueCommentEvent, PullRequestEvent, is_review_command
 from app.github.verifier import verify_signature
-from app.jobs.models import GlobalReviewSettings, RepositorySettings, TriggerType, WebhookDelivery
+from app.jobs.models import (
+    GlobalReviewSettings,
+    RepositorySettings,
+    ReviewJob,
+    TriggerType,
+    WebhookDelivery,
+)
 from app.jobs.repository import JobRepository, QueueCapacityError
 from app.review.settings import EffectiveReviewSettings, resolve
 
@@ -236,6 +243,11 @@ async def github_webhook(
             head_sha = pr_event.pull_request.head.sha
             trigger = TriggerType.AUTO
             source_comment_id = None
+            not_before = (
+                datetime.now(UTC) + timedelta(seconds=effective.synchronize_debounce_seconds)
+                if pr_event.action == "synchronize"
+                else None
+            )
         else:
             comment_event = IssueCommentEvent.model_validate(payload)
             if comment_event.action != "created" or comment_event.issue.pull_request is None:
@@ -282,6 +294,27 @@ async def github_webhook(
             head_sha = str(raw_pr["head"]["sha"])
             trigger = TriggerType.COMMAND
             source_comment_id = comment_event.comment.id
+            not_before = None
+            if effective.command_cooldown_seconds:
+                recent = await session.scalar(
+                    select(ReviewJob)
+                    .where(
+                        ReviewJob.repository_owner == owner,
+                        ReviewJob.repository_name == repository_name,
+                        ReviewJob.pull_request_number == pr_number,
+                        ReviewJob.head_sha == head_sha,
+                        ReviewJob.trigger_type == TriggerType.COMMAND,
+                        ReviewJob.status.in_({"PENDING", "RUNNING", "SUCCEEDED"}),
+                        ReviewJob.created_at
+                        >= datetime.now(UTC)
+                        - timedelta(seconds=effective.command_cooldown_seconds),
+                    )
+                    .order_by(ReviewJob.created_at.desc())
+                    .limit(1)
+                )
+                if recent is not None:
+                    await session.commit()
+                    return {"accepted": True, "ignored": "command_cooldown"}
         try:
             job, created = await JobRepository(session).enqueue(
                 max_pending_jobs=settings.max_pending_jobs,
@@ -295,6 +328,7 @@ async def github_webhook(
                 head_sha=head_sha,
                 trigger_type=trigger,
                 source_comment_id=source_comment_id,
+                not_before=not_before,
             )
         except QueueCapacityError:
             await session.rollback()

@@ -68,6 +68,27 @@ async def test_claim_order_and_stale_recovery(app_client):
 
 
 @pytest.mark.asyncio
+async def test_claim_skips_scheduled_job_until_not_before(app_client) -> None:
+    _, factory = app_client
+    async with factory() as session:
+        session.add(
+            ReviewJob(
+                delivery_id="scheduled",
+                installation_id=1,
+                repository_owner="o",
+                repository_name="r",
+                pull_request_number=1,
+                base_sha="a" * 40,
+                head_sha="b" * 40,
+                trigger_type=TriggerType.AUTO,
+                not_before=datetime.now(UTC) + timedelta(minutes=5),
+            )
+        )
+        await session.commit()
+        assert await JobRepository(session).claim_next() is None
+
+
+@pytest.mark.asyncio
 async def test_retry_creates_a_new_job_without_rewriting_failure(app_client) -> None:
     _, factory = app_client
     async with factory() as session:

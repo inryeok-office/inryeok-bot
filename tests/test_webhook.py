@@ -88,9 +88,11 @@ async def test_pull_request_actions(app_client, pr_payload, action):
     client, _ = app_client
     pr_payload["action"] = action
     body, headers = signed(pr_payload, delivery=f"d-{action}")
-    assert (await client.post("/webhooks/github", content=body, headers=headers)).json()[
-        "created"
-    ] is True
+    response = await client.post("/webhooks/github", content=body, headers=headers)
+    if action == "synchronize":
+        assert response.json()["ignored"] == "trigger_disabled"
+    else:
+        assert response.json()["created"] is True
 
 
 @pytest.mark.asyncio
@@ -284,9 +286,10 @@ async def test_same_comment_id_with_new_delivery_is_not_reprocessed(app_client):
         "created"
     ] is True
     body, headers = signed(payload, "issue_comment", "comment-delivery-2")
-    assert (await client.post("/webhooks/github", content=body, headers=headers)).json()[
-        "created"
-    ] is False
+    assert (await client.post("/webhooks/github", content=body, headers=headers)).json() == {
+        "accepted": True,
+        "ignored": "command_cooldown",
+    }
 
 
 @pytest.mark.asyncio
@@ -306,11 +309,12 @@ async def test_distinct_manual_commands_can_review_the_same_head(app_client):
     ] is True
     payload["comment"]["id"] = 802
     body, headers = signed(payload, "issue_comment", "manual-command-2")
-    assert (await client.post("/webhooks/github", content=body, headers=headers)).json()[
-        "created"
-    ] is True
+    assert (await client.post("/webhooks/github", content=body, headers=headers)).json() == {
+        "accepted": True,
+        "ignored": "command_cooldown",
+    }
     async with factory() as session:
-        assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 2
+        assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 1
 
 
 @pytest.mark.asyncio

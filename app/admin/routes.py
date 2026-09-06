@@ -299,6 +299,8 @@ async def update_global_settings(
     review_on_reopened: bool = Form(False),
     review_on_ready_for_review: bool = Form(False),
     review_on_synchronize: bool = Form(False),
+    synchronize_debounce_seconds: int = Form(60),
+    command_cooldown_seconds: int = Form(60),
     review_domain_mode: str = Form("AUTO"),
     manual_review_domains: list[str] = Form([]),
     session: AsyncSession = Depends(get_session),
@@ -319,6 +321,8 @@ async def update_global_settings(
             not 0.8 <= minimum_confidence <= 1
             or not 1 <= max_findings <= 50
             or not 30 <= codex_timeout_seconds <= 3600
+            or not 0 <= synchronize_debounce_seconds <= 3600
+            or not 0 <= command_cooldown_seconds <= 3600
         ):
             raise ValueError("setting outside safety limit")
     except ValueError as exc:
@@ -356,6 +360,8 @@ async def update_global_settings(
         review_on_ready_for_review,
         review_on_synchronize,
     )
+    value.synchronize_debounce_seconds = synchronize_debounce_seconds
+    value.command_cooldown_seconds = command_cooldown_seconds
     session.add(
         AdminAuditLog(
             actor_login=principal.github_login,
@@ -398,6 +404,8 @@ async def update_repository(
     override_review_on_reopened: str = Form("inherit"),
     override_review_on_ready_for_review: str = Form("inherit"),
     override_review_on_synchronize: str = Form("inherit"),
+    override_synchronize_debounce_seconds: str = Form(""),
+    override_command_cooldown_seconds: str = Form(""),
     override_review_domain_mode: str = Form("inherit"),
     override_manual_review_domains: list[str] = Form([]),
     session: AsyncSession = Depends(get_session),
@@ -454,6 +462,12 @@ async def update_repository(
             override_review_on_ready_for_review
         )
         repository.override_review_on_synchronize = _optional_bool(override_review_on_synchronize)
+        repository.override_synchronize_debounce_seconds = _optional_int(
+            override_synchronize_debounce_seconds, 0, 3600
+        )
+        repository.override_command_cooldown_seconds = _optional_int(
+            override_command_cooldown_seconds, 0, 3600
+        )
         if override_review_domain_mode not in {"inherit", "AUTO", "MANUAL"}:
             raise ValueError("unsupported review domain mode")
         repository.override_review_domain_mode = (

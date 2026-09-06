@@ -73,6 +73,18 @@ def test_no_findings_review_uses_korean_completion_message() -> None:
     assert "### \uc8fc\uc694 \ub0b4\uc6a9" not in payload["body"]
 
 
+def test_rerun_comparison_is_language_specific_and_non_resolving() -> None:
+    comparison = {"new": 1, "still": 2, "not_detected": 3}
+    korean = build_review_payload([], 2, "a" * 40, True, "ko", "marker", comparison)["body"]
+    english = build_review_payload([], 2, "a" * 40, True, "en", "marker", comparison)["body"]
+    assert "### \uc7ac\ub9ac\ubdf0 \ube44\uad50" in korean
+    assert "\uc0c8\ub85c\uc6b4 Finding | 1" in korean
+    assert "\ud574\uacb0\uc744 \ud655\uc815" in korean
+    assert "### Rerun comparison" in english
+    assert "Not detected in this review | 3" in english
+    assert "does not confirm" in english
+
+
 def test_publisher_escapes_heading_control_characters_and_keeps_marker() -> None:
     payload = build_review_payload([_finding(title="heading #1")], 1, "a" * 40)
 
