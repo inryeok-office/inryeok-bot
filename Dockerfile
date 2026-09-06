@@ -1,6 +1,6 @@
 ARG PYTHON_VERSION=3.13
 
-FROM python:${PYTHON_VERSION}-slim-bookworm
+FROM python:${PYTHON_VERSION}-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH="/home/reviewbot/.local/bin:${PATH}"
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 reviewbot && useradd --uid 10001 --gid reviewbot --create-home reviewbot
