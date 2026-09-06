@@ -15,8 +15,7 @@ Environment=CODEX_MODEL_ALLOWLIST=
 RuntimeDirectory=inryeok-bot
 RuntimeDirectoryMode=0750
 UMask=0007
-ExecStart=/opt/inryeok-bot/executor/venv/bin/uvicorn app.codex.executor:app --uds /run/inryeok-bot/executor.sock
-ExecStartPost=/usr/bin/chmod 0660 /run/inryeok-bot/executor.sock
+ExecStart=/bin/sh /opt/inryeok-bot/executor/run-executor.sh
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=yes
