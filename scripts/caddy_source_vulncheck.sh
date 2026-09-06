@@ -17,13 +17,18 @@ mkdir -p "$ROOT/out"
 set +e
 "$ROOT/bin/govulncheck" -json ./... >"$ROOT/out/source.json"
 source_status=$?
+"$ROOT/bin/govulncheck" ./... >"$ROOT/out/source.txt" 2>&1
+source_text_status=$?
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -o "$ROOT/out/caddy" ./cmd/caddy
 build_status=$?
 if [ "$build_status" -eq 0 ]; then
   "$ROOT/bin/govulncheck" -json -mode=binary "$ROOT/out/caddy" >"$ROOT/out/binary.json"
   binary_status=$?
+  "$ROOT/bin/govulncheck" -mode=binary "$ROOT/out/caddy" >"$ROOT/out/binary.txt" 2>&1
+  binary_text_status=$?
 else
   binary_status=1
+  binary_text_status=1
 fi
 set -e
 
@@ -31,20 +36,20 @@ summary="$GITHUB_WORKSPACE/caddy-vuln-summary.md"
 {
   echo "# Caddy source vulnerability check"
   echo
-  echo "- tag: `$TAG`"
-  echo "- peeled commit: `$actual`"
-  echo "- govulncheck: `$GOVULNCHECK_VERSION`"
+  echo "- tag: $TAG"
+  echo "- peeled commit: $actual"
+  echo "- govulncheck: $GOVULNCHECK_VERSION"
   echo "- build: $([ "$build_status" -eq 0 ] && echo PASS || echo FAIL)"
   echo "- source scan: $([ "$source_status" -eq 0 ] && echo PASS || echo FINDINGS_OR_ERROR)"
   echo "- binary scan: $([ "$binary_status" -eq 0 ] && echo PASS || echo FINDINGS_OR_ERROR)"
   echo
   echo "## Advisory identifiers"
-  { grep -rhoE 'GO-[0-9]{4}-[0-9]+' "$ROOT/out" || true; } | sort -u | sed 's/^/- /'
+  { grep -hoE 'GO-[0-9]{4}-[0-9]+' "$ROOT/out/source.txt" "$ROOT/out/binary.txt" 2>/dev/null || true; } | sort -u | sed 's/^/- /'
   echo
   echo "The full source tree and module cache are intentionally not retained."
 } >"$summary"
 cat "$summary" >>"$GITHUB_STEP_SUMMARY"
 
-if [ "$source_status" -ne 0 ] || [ "$build_status" -ne 0 ] || [ "$binary_status" -ne 0 ]; then
+if [ "$source_status" -ne 0 ] || [ "$source_text_status" -ne 0 ] || [ "$build_status" -ne 0 ] || [ "$binary_status" -ne 0 ] || [ "$binary_text_status" -ne 0 ]; then
   exit 1
 fi
