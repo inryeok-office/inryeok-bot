@@ -1,0 +1,20 @@
+[Unit]
+Description=Inryeok Bot PostgreSQL backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+WorkingDirectory=/opt/inryeok-bot/app
+Environment=APP_DIR=/opt/inryeok-bot/app
+Environment=BACKUP_DIR=/var/backups/inryeok-bot
+Environment=RETENTION_DAYS=31
+ExecStart=/opt/inryeok-bot/app/scripts/backup_postgres.sh
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ReadWritePaths=/var/backups/inryeok-bot
+

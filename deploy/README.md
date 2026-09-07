@@ -24,3 +24,7 @@ application checkout. The executor injects a fixed read-only `AGENTS.md` into
 each temporary review workspace and removes repository-provided instruction
 files before invoking Codex. The review schema is read from the explicitly
 allowlisted `/opt/inryeok-bot/app/review-schema.json` file only.
+
+For the host backup timer and its safety properties, see
+`docs/operations-automation.md`. The timer is intentionally installed and
+enabled as a separate operator action; installing the unit does not start it.
