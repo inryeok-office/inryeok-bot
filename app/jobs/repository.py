@@ -4,7 +4,13 @@ from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.jobs.models import JobStatus, ReviewFailureNotice, ReviewJob, TriggerType
+from app.jobs.models import (
+    GlobalReviewSettings,
+    JobStatus,
+    ReviewFailureNotice,
+    ReviewJob,
+    TriggerType,
+)
 
 
 class QueueCapacityError(RuntimeError):
@@ -94,6 +100,9 @@ class JobRepository:
             return existing, False
 
     async def claim_next(self) -> ReviewJob | None:
+        settings = await self.session.get(GlobalReviewSettings, 1)
+        if settings is not None and settings.processing_paused:
+            return None
         job = await self.session.scalar(claim_statement())
         if job is None:
             return None

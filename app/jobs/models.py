@@ -184,6 +184,7 @@ class GlobalReviewSettings(Base):
     codex_timeout_seconds: Mapped[int] = mapped_column(Integer, default=900)
     review_domain_mode: Mapped[str] = mapped_column(String(16), default=ReviewDomainMode.AUTO.value)
     manual_review_domains: Mapped[str] = mapped_column(Text, default="")
+    processing_paused: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_by: Mapped[str | None] = mapped_column(String(255))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

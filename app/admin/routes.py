@@ -291,6 +291,7 @@ async def update_global_settings(
     enabled: bool = Form(False),
     auto_review_enabled: bool = Form(False),
     command_review_enabled: bool = Form(False),
+    processing_paused: bool | None = Form(None),
     include_low_severity: bool = Form(False),
     minimum_severity: str = Form("MEDIUM"),
     enabled_categories: str = Form(""),
@@ -334,6 +335,8 @@ async def update_global_settings(
         auto_review_enabled,
         command_review_enabled,
     )
+    if processing_paused is not None:
+        value.processing_paused = processing_paused
     value.language, value.review_profile, value.model = language, review_profile, model or None
     value.max_findings, value.minimum_confidence, value.codex_timeout_seconds = (
         max_findings,
