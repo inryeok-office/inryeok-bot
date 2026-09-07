@@ -91,3 +91,38 @@ def test_reasoning_effort_is_inherited_and_validated() -> None:
     repository.override_reasoning_effort = "maximum"
     with pytest.raises(ValueError, match="reasoning effort"):
         resolve(global_settings, repository, _settings())
+
+
+@pytest.mark.parametrize(
+    ("profile", "confidence", "severity", "include_low", "maximum"),
+    [
+        ("CONSERVATIVE", 0.9, "HIGH", False, 10),
+        ("BALANCED", 0.8, "MEDIUM", False, 20),
+        ("THOROUGH", 0.72, "LOW", True, 30),
+    ],
+)
+def test_legacy_global_defaults_follow_selected_review_profile(
+    profile: str, confidence: float, severity: str, include_low: bool, maximum: int
+) -> None:
+    global_settings = GlobalReviewSettings(id=1, review_profile=profile)
+    effective = resolve(global_settings, _repository(), _settings())
+    assert effective.minimum_confidence == confidence
+    assert effective.minimum_severity == severity
+    assert effective.include_low_severity is include_low
+    assert effective.max_findings == maximum
+
+
+def test_explicit_global_thresholds_are_not_overwritten_by_profile() -> None:
+    global_settings = GlobalReviewSettings(
+        id=1,
+        review_profile="THOROUGH",
+        minimum_confidence=0.88,
+        minimum_severity="MEDIUM",
+        include_low_severity=False,
+        max_findings=12,
+    )
+    effective = resolve(global_settings, _repository(), _settings())
+    assert effective.minimum_confidence == 0.88
+    assert effective.minimum_severity == "MEDIUM"
+    assert effective.include_low_severity is False
+    assert effective.max_findings == 12

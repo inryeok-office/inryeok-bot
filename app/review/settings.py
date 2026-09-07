@@ -16,6 +16,24 @@ MIN_CONFIDENCE = 0.8
 SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
 
 
+# A profile is a review policy, not merely a presentation label.  These values
+# are deliberately conservative lower bounds; explicit repository overrides
+# still take precedence in ``resolve``.
+@dataclass(frozen=True)
+class ProfileDefaults:
+    minimum_confidence: float
+    minimum_severity: str
+    include_low_severity: bool
+    max_findings: int
+
+
+PROFILE_DEFAULTS: dict[str, ProfileDefaults] = {
+    "CONSERVATIVE": ProfileDefaults(0.90, "HIGH", False, 10),
+    "BALANCED": ProfileDefaults(0.80, "MEDIUM", False, 20),
+    "THOROUGH": ProfileDefaults(0.72, "LOW", True, 30),
+}
+
+
 @dataclass(frozen=True)
 class EffectiveReviewSettings:
     enabled: bool
@@ -88,12 +106,35 @@ def resolve(
         global_settings.reasoning_effort or ReasoningEffort.MEDIUM.value,
     )
     validate_choice(language, profile, model, settings, reasoning_effort)
+    profile_defaults = PROFILE_DEFAULTS[profile]
+    # Before profile-aware defaults existed, the persisted global row used
+    # 0.9/MEDIUM/10/false.  Treat that exact tuple as legacy defaults so a
+    # selected profile takes effect without overwriting intentional settings.
+    legacy_defaults = (
+        global_settings.minimum_confidence in (None, 0.9)
+        and (global_settings.minimum_severity or "MEDIUM").upper() == "MEDIUM"
+        and (global_settings.max_findings or 10) == 10
+        and not (global_settings.include_low_severity or False)
+    )
+
+    def profile_value[T](profile_default: T, current: T) -> T:
+        return profile_default if legacy_defaults else current
+
     confidence = max(
-        MIN_CONFIDENCE,
-        choose(repository.override_minimum_confidence, global_settings.minimum_confidence or 0.9),
+        0.72 if profile == "THOROUGH" else MIN_CONFIDENCE,
+        choose(
+            repository.override_minimum_confidence,
+            profile_value(
+                profile_defaults.minimum_confidence, global_settings.minimum_confidence or 0.9
+            ),
+        ),
     )
     maximum = min(
-        MAX_FINDINGS, choose(repository.override_max_findings, global_settings.max_findings or 10)
+        MAX_FINDINGS,
+        choose(
+            repository.override_max_findings,
+            profile_value(profile_defaults.max_findings, global_settings.max_findings or 10),
+        ),
     )
     timeout = min(
         3600,
@@ -107,7 +148,10 @@ def resolve(
     )
     patterns = choose(repository.override_ignored_paths, global_settings.ignored_paths or "")
     minimum_severity = choose(
-        repository.override_minimum_severity, global_settings.minimum_severity or "MEDIUM"
+        repository.override_minimum_severity,
+        profile_value(
+            profile_defaults.minimum_severity, global_settings.minimum_severity or "MEDIUM"
+        ),
     ).upper()
     if minimum_severity not in SEVERITIES:
         raise ValueError("unsupported minimum severity")
@@ -142,7 +186,10 @@ def resolve(
         max_findings=maximum,
         minimum_confidence=confidence,
         include_low_severity=choose(
-            repository.override_include_low_severity, global_settings.include_low_severity
+            repository.override_include_low_severity,
+            profile_value(
+                profile_defaults.include_low_severity, global_settings.include_low_severity
+            ),
         ),
         minimum_severity=minimum_severity,
         enabled_categories=tuple(
