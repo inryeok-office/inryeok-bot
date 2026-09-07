@@ -100,6 +100,8 @@ async def test_admin_static_design_system_is_local(app_client) -> None:
     assert response.status_code == 200
     assert "--primary:" in response.text
     assert "unpkg" not in response.text
+    assert ".preset-grid" in response.text
+    assert "prefers-reduced-motion" in response.text
 
 
 @pytest.mark.asyncio
@@ -111,6 +113,18 @@ async def test_admin_console_uses_korean_operational_labels(app_client) -> None:
     assert "운영 상태" in response.text
     assert "리뷰 작업" in response.text
     assert "Review jobs" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_detail_presets_are_explained_and_accessible(app_client) -> None:
+    client, _, _, _, _ = await authenticated_repository(app_client)
+    response = await client.get("/admin/settings")
+    assert response.status_code == 200
+    assert "핵심 검토" in response.text
+    assert "균형 검토" in response.text
+    assert "상세 검토" in response.text
+    assert 'name="review_profile"' in response.text
+    assert "사용량 많음" in response.text
 
 
 def test_unlisted_accounts_can_only_be_enabled_explicitly_in_development() -> None:
