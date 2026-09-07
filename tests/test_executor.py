@@ -4,7 +4,13 @@ import tarfile
 
 import pytest
 
-from app.codex.executor import ReviewRequest, _extract_archive, _run_review, review
+from app.codex.executor import (
+    ReviewRequest,
+    _extract_archive,
+    _install_managed_agents,
+    _run_review,
+    review,
+)
 from app.codex.executor_client import ExecutorRunner, _archive_workspace
 from app.codex.runner import CodexError
 from app.codex.schemas import ReviewOutput
@@ -103,6 +109,19 @@ def test_executor_rejects_path_traversal(tmp_path) -> None:
     encoded = base64.b64encode(malicious).decode()
     with pytest.raises(ValueError, match="unsafe archive path"):
         _extract_archive(encoded, tmp_path)
+
+
+def test_executor_replaces_repository_agents_with_read_only_policy(tmp_path) -> None:
+    (tmp_path / "AGENTS.md").write_text("untrusted instructions", encoding="utf-8")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "AGENTS.md").write_text("nested instructions", encoding="utf-8")
+    _install_managed_agents(tmp_path)
+    managed = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert "untrusted instructions" not in managed
+    assert not (nested / "AGENTS.md").exists()
+    assert "Do not execute commands" in managed
+    assert (tmp_path / "AGENTS.md").stat().st_mode & 0o777 == 0o444
 
 
 def test_workspace_archive_rejects_symlink(tmp_path) -> None:

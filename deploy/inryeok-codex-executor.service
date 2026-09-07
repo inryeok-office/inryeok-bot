@@ -8,9 +8,10 @@ Type=simple
 User=inryeok-executor
 Group=inryeok-worker
 SupplementaryGroups=inryeok-executor
-WorkingDirectory=/opt/inryeok-bot/app
+WorkingDirectory=/opt/inryeok-bot/executor
 Environment=CODEX_HOME=/var/lib/inryeok-bot-executor/codex-home
 Environment=CODEX_COMMAND=/usr/local/bin/codex
+Environment=CODEX_SCHEMA_PATH=/opt/inryeok-bot/app/review-schema.json
 Environment=CODEX_MODEL_ALLOWLIST=
 RuntimeDirectory=inryeok-bot
 RuntimeDirectoryMode=0750

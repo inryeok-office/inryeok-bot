@@ -183,6 +183,8 @@ def _unit_has_expected_paths() -> bool:
     except OSError:
         return False
     required = (
+        "WorkingDirectory=/opt/inryeok-bot/executor",
+        "Environment=CODEX_SCHEMA_PATH=/opt/inryeok-bot/app/review-schema.json",
         "ProtectHome=yes",
         "ProtectSystem=strict",
         "ReadWritePaths=/var/lib/inryeok-bot-executor /run/inryeok-bot",

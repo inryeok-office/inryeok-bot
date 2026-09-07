@@ -296,9 +296,12 @@ class FakeRunner:
 class CodexRunner:
     _lock = asyncio.Lock()
 
-    def __init__(self, settings: Settings, schema_path: Path = Path("review-schema.json")) -> None:
+    def __init__(self, settings: Settings, schema_path: Path | None = None) -> None:
         self.settings = settings
-        self.schema_path = schema_path.resolve()
+        configured_schema = schema_path or Path(
+            os.environ.get("CODEX_SCHEMA_PATH", "review-schema.json")
+        )
+        self.schema_path = configured_schema.resolve()
 
     async def run(
         self,

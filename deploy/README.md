@@ -18,3 +18,9 @@ sudo -u inryeok-executor env CODEX_HOME=/var/lib/inryeok-bot-executor/codex-home
 The executor account must not be in `sudo` or `docker` groups and must not have
 access to `/opt/inryeok-bot/secrets`, database credentials, backups, or the
 Compose `review-work` volume.
+
+The service working directory is `/opt/inryeok-bot/executor`, separate from the
+application checkout. The executor injects a fixed read-only `AGENTS.md` into
+each temporary review workspace and removes repository-provided instruction
+files before invoking Codex. The review schema is read from the explicitly
+allowlisted `/opt/inryeok-bot/app/review-schema.json` file only.

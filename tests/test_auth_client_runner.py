@@ -172,6 +172,14 @@ async def test_codex_runner_uses_managed_read_only_profile(monkeypatch, tmp_path
     assert "GITHUB_WEBHOOK_SECRET" not in captured_env
 
 
+def test_codex_runner_uses_explicit_schema_path(monkeypatch, tmp_path) -> None:
+    from app.codex.runner import CodexRunner
+
+    monkeypatch.setenv("CODEX_SCHEMA_PATH", str(tmp_path / "review-schema.json"))
+    runner = CodexRunner(Settings(environment="test", codex_command="codex"))
+    assert runner.schema_path == (tmp_path / "review-schema.json").resolve()
+
+
 @respx.mock
 @pytest.mark.asyncio
 async def test_eyes_reaction_is_added_once_per_bot() -> None:
