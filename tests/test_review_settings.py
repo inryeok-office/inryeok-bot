@@ -98,7 +98,7 @@ def test_reasoning_effort_is_inherited_and_validated() -> None:
     [
         ("CONSERVATIVE", 0.9, "HIGH", False, 10),
         ("BALANCED", 0.8, "MEDIUM", False, 20),
-        ("THOROUGH", 0.72, "LOW", True, 30),
+        ("THOROUGH", 0.8, "LOW", True, 30),
     ],
 )
 def test_legacy_global_defaults_follow_selected_review_profile(

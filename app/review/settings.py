@@ -30,7 +30,9 @@ class ProfileDefaults:
 PROFILE_DEFAULTS: dict[str, ProfileDefaults] = {
     "CONSERVATIVE": ProfileDefaults(0.90, "HIGH", False, 10),
     "BALANCED": ProfileDefaults(0.80, "MEDIUM", False, 20),
-    "THOROUGH": ProfileDefaults(0.72, "LOW", True, 30),
+    # Keep the validator's established confidence floor while broadening
+    # severity and finding budget for detailed reviews.
+    "THOROUGH": ProfileDefaults(0.80, "LOW", True, 30),
 }
 
 
@@ -121,7 +123,7 @@ def resolve(
         return profile_default if legacy_defaults else current
 
     confidence = max(
-        0.72 if profile == "THOROUGH" else MIN_CONFIDENCE,
+        MIN_CONFIDENCE,
         choose(
             repository.override_minimum_confidence,
             profile_value(
