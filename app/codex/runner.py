@@ -65,6 +65,7 @@ class CodexError(RuntimeError):
         self.retryable = retryable
         self.retry_at = retry_at
         self.signature = signature or code
+        self.exit_code: int | None = None
 
 
 def _error_text(stdout: bytes, stderr: bytes) -> str:
@@ -294,7 +295,9 @@ class CodexRunner:
         if len(stdout) > MAX_PROCESS_OUTPUT or len(stderr) > MAX_PROCESS_OUTPUT:
             raise CodexError("CODEX_OUTPUT_LIMIT", "Codex output exceeded the safe limit")
         if process.returncode != 0:
-            raise classify_codex_failure(process.returncode or 1, stdout, stderr)
+            error = classify_codex_failure(process.returncode or 1, stdout, stderr)
+            error.exit_code = process.returncode
+            raise error
         if not stdout.strip():
             raise CodexError("CODEX_OUTPUT_MISSING", "Codex returned no structured output")
         try:

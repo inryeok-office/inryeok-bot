@@ -224,7 +224,7 @@ async def _one_codex_call(repo: Path) -> dict[str, Any]:
         return {
             "stage": "codex_exec",
             "ok": False,
-            "exit_code": None,
+            "exit_code": error.exit_code,
             "error_code": error.code,
             "retryable": error.retryable,
             "matched_safe_signature": error.signature,

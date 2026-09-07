@@ -91,12 +91,16 @@ class ExecutorRunner(ReviewRunner):
             except ValueError:
                 error = "EXECUTOR_FAILED"
                 retryable = False
-            raise CodexError(
+            codex_error = CodexError(
                 error,
                 "Codex executor rejected the review",
                 retryable=retryable,
                 signature=str(body.get("matched_safe_signature", error)),
             )
+            raw_exit_code = body.get("exit_code")
+            if isinstance(raw_exit_code, int):
+                codex_error.exit_code = raw_exit_code
+            raise codex_error
         try:
             return ReviewOutput.model_validate(response.json())
         except (ValueError, TypeError) as exc:
