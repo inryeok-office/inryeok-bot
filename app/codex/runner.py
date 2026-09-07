@@ -314,6 +314,7 @@ class CodexRunner:
             "--ephemeral",
             "--ignore-user-config",
             "--ignore-rules",
+            "--skip-git-repo-check",
             "--sandbox",
             "read-only",
             "--config",
