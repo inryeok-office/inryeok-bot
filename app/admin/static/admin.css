@@ -97,6 +97,7 @@ dl.details dt { color: var(--muted); font-size: .86rem; font-weight: 650; }
 .empty { text-align: center; padding: 42px 20px; color: var(--muted); }
 .danger-text { color: var(--danger); }
 .footer-note { color: var(--muted); font-size: .8rem; margin-top: 20px; }
+.diagnostic { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; background: #101828; color: #d0d5dd; border-radius: 8px; padding: 14px; font: .8rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
 @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .sidebar { padding: 14px 16px; gap: 12px; } .nav { display: flex; overflow-x: auto; padding-bottom: 2px; } .nav a { white-space: nowrap; } .sidebar-footer { display: none; } .grid.stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .content { padding-top: 22px; } .topbar { align-items: flex-start; flex-direction: column; } .page-head { flex-direction: column; } .grid.stats, .grid.two, .fields, .check-grid { grid-template-columns: 1fr; } .form-actions { flex-direction: column-reverse; } .form-actions button, .form-actions .button { width: 100%; } dl.details { grid-template-columns: 1fr; } dl.details dt { border-bottom: 0; padding-bottom: 2px; } dl.details dd { padding-top: 0; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }

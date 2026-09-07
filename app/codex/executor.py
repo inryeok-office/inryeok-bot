@@ -129,6 +129,7 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
                     "retryable": exc.retryable,
                     "matched_safe_signature": exc.signature,
                     "exit_code": exc.exit_code,
+                    "stderr_byte_length": exc.stderr_byte_length,
                     "safe_diagnostic": list(exc.safe_diagnostic),
                     "correlation_id": correlation_id,
                     "stage": "codex_exec",

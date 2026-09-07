@@ -142,6 +142,11 @@ async def run_worker() -> None:
                 attempts = job.attempts
                 await session.rollback()
                 job.codex_exit_code = exc.exit_code
+                job.error_stage = exc.stage
+                job.error_signature = exc.signature
+                job.correlation_id = exc.correlation_id
+                job.stderr_byte_length = exc.stderr_byte_length
+                job.redacted_diagnostic = "\n".join(exc.safe_diagnostic)[:2048] or None
                 if exc.retryable and attempts < settings.worker_max_attempts:
                     job.status = JobStatus.PENDING
                     job.started_at = None

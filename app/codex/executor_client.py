@@ -100,6 +100,15 @@ class ExecutorRunner(ReviewRunner):
             raw_exit_code = body.get("exit_code")
             if isinstance(raw_exit_code, int):
                 codex_error.exit_code = raw_exit_code
+            raw_stderr_length = body.get("stderr_byte_length")
+            if isinstance(raw_stderr_length, int):
+                codex_error.stderr_byte_length = raw_stderr_length
+            raw_correlation = body.get("correlation_id")
+            if isinstance(raw_correlation, str):
+                codex_error.correlation_id = raw_correlation
+            raw_stage = body.get("stage")
+            if isinstance(raw_stage, str):
+                codex_error.stage = raw_stage
             raw_diagnostic = body.get("safe_diagnostic")
             if isinstance(raw_diagnostic, list):
                 codex_error.safe_diagnostic = tuple(

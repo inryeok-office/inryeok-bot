@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from app.codex.runner import CodexError, redact_diagnostic
+from app.codex.runner import CodexError, classify_codex_failure, redact_diagnostic
 from scripts.diagnose_codex_failure import _one_codex_call, _sandbox_status
 
 
@@ -45,3 +45,40 @@ def test_diagnostic_redacts_credentials_and_limits_lines() -> None:
     lines = redact_diagnostic(b"Authorization: Bearer secret-token\n" * 20, b"stderr")
     assert len(lines) <= 10
     assert all("secret-token" not in line for line in lines)
+
+
+def test_diagnostic_redacts_paths_pem_prompt_and_limits_bytes(tmp_path) -> None:
+    prompt = "private prompt marker"
+    payload = (
+        f"{tmp_path} {prompt} DATABASE_URL=postgresql://user:password@db/app\n" + "x" * 6000
+    ).encode()
+    lines = redact_diagnostic(
+        payload,
+        b"-----BEGIN PRIVATE KEY-----secret-----END PRIVATE KEY-----",
+        sensitive_values=(prompt,),
+        sensitive_paths=(tmp_path,),
+    )
+    rendered = "\n".join(lines)
+    assert len(lines) <= 10
+    assert len(rendered) <= 2048
+    assert prompt not in rendered
+    assert str(tmp_path) not in rendered
+    assert "password@db" not in rendered
+    assert "BEGIN PRIVATE KEY" not in rendered
+
+
+def test_failure_categories_are_safe_and_unknown_is_not_retryable() -> None:
+    cases = [
+        (b"unknown option", "CLI_ARGUMENT_ERROR", False),
+        (b"permission denied", "FILE_PERMISSION_ERROR", False),
+        (b"not a git repository", "GIT_REPOSITORY_ERROR", False),
+        (b"schema validation failed", "SCHEMA_ERROR", False),
+        (b"bwrap user namespace", "SANDBOX_START_ERROR", False),
+        (b"authentication required", "CODEX_AUTH", False),
+        (b"service unavailable", "CODEX_SERVICE_UNAVAILABLE", True),
+        (b"unclassified failure", "CODEX_EXIT_NONZERO", False),
+    ]
+    for stderr, code, retryable in cases:
+        error = classify_codex_failure(1, b"", stderr)
+        assert error.code == code
+        assert error.retryable is retryable

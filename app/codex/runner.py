@@ -12,7 +12,10 @@ from app.codex.schemas import ReviewOutput
 from app.config import Settings
 
 MAX_PROCESS_OUTPUT = 2_000_000
-MAX_SAFE_DIAGNOSTIC_BYTES = 32_000
+MAX_CAPTURE_BYTES = 16_000
+MAX_SAFE_DIAGNOSTIC_BYTES = 2_048
+MAX_SAFE_DIAGNOSTIC_LINES = 10
+MAX_SAFE_DIAGNOSTIC_LINE = 300
 
 
 def _process_group_options() -> dict[str, Any]:
@@ -68,6 +71,9 @@ class CodexError(RuntimeError):
         self.signature = signature or code
         self.exit_code: int | None = None
         self.safe_diagnostic: tuple[str, ...] = ()
+        self.stderr_byte_length = 0
+        self.correlation_id: str | None = None
+        self.stage = "codex_exec"
 
 
 def _error_text(stdout: bytes, stderr: bytes) -> str:
@@ -83,9 +89,21 @@ def _error_text(stdout: bytes, stderr: bytes) -> str:
     return "\n".join(parts).casefold()
 
 
-def redact_diagnostic(stdout: bytes, stderr: bytes) -> tuple[str, ...]:
+def redact_diagnostic(
+    stdout: bytes,
+    stderr: bytes,
+    sensitive_values: tuple[str, ...] = (),
+    sensitive_paths: tuple[Path, ...] = (),
+) -> tuple[str, ...]:
     """Return bounded operator diagnostics without credentials or raw payloads."""
-    text = (stdout + b"\n" + stderr).decode(errors="replace")
+    captured = (stdout[:MAX_CAPTURE_BYTES] + b"\n" + stderr[:MAX_CAPTURE_BYTES])[:MAX_CAPTURE_BYTES]
+    text = captured.decode(errors="replace")
+    text = re.sub(
+        r"-----BEGIN[A-Z0-9 _-]*-----.*?-----END[A-Z0-9 _-]*-----",
+        "[PEM_REDACTED]",
+        text,
+        flags=re.I | re.S,
+    )
     text = re.sub(r"(?i)(authorization)\s*[:=]\s*bearer\s+\S+", r"\1=[REDACTED]", text)
     text = re.sub(
         r"(?i)(authorization|cookie|token|password|secret|api[_-]?key)\s*[:=]\s*\S+",
@@ -94,15 +112,24 @@ def redact_diagnostic(stdout: bytes, stderr: bytes) -> tuple[str, ...]:
     )
     text = re.sub(r"(?i)bearer\s+\S+", "Bearer [REDACTED]", text)
     text = re.sub(r"\bsk-[A-Za-z0-9_-]+", "[REDACTED]", text)
+    text = re.sub(r"(?i)(postgres(?:ql)?(?:\+\w+)?://)\S+", r"\1[REDACTED]", text)
+    text = re.sub(r"(?i)(https?://)([^\s/@]+):([^\s/@]+)@", r"\1[REDACTED]@", text)
+    for value in sensitive_values:
+        if value:
+            text = text.replace(value[:512], "[REDACTED]")
+    for path in sensitive_paths:
+        text = text.replace(str(path), "[PATH_REDACTED]")
+    text = re.sub(r"(?:[A-Za-z]:\\|/)(?:[^\s'\"`]|\\ )+", "[PATH_REDACTED]", text)
+    text = "".join(char if char in "\n\t" or ord(char) >= 32 else " " for char in text)
     lines: list[str] = []
     used = 0
     for line in text.splitlines():
-        safe = line[:500]
+        safe = line[:MAX_SAFE_DIAGNOSTIC_LINE]
         if used + len(safe) > MAX_SAFE_DIAGNOSTIC_BYTES:
             break
         lines.append(safe)
         used += len(safe)
-        if len(lines) == 10:
+        if len(lines) == MAX_SAFE_DIAGNOSTIC_LINES:
             break
     return tuple(lines)
 
@@ -178,7 +205,7 @@ def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> Cod
         )
     if any(value in text for value in ("permission denied", "operation not permitted")):
         return CodexError(
-            "EXECUTOR_PERMISSION",
+            "FILE_PERMISSION_ERROR",
             "Codex execution permission denied",
             signature="permission_denied",
         )
@@ -200,7 +227,22 @@ def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> Cod
         value in text for value in ("not a git repository", "repository check", "fatal: not a git")
     ):
         return CodexError(
-            "CODEX_REPOSITORY", "Codex workspace repository check failed", signature="repository"
+            "GIT_REPOSITORY_ERROR",
+            "Codex workspace repository check failed",
+            signature="repository",
+        )
+    if any(
+        value in text for value in ("schema", "invalid json", "json parse", "structured output")
+    ):
+        return CodexError(
+            "SCHEMA_ERROR", "Codex output schema validation failed", signature="schema"
+        )
+    if any(
+        value in text
+        for value in ("bwrap", "bubblewrap", "user namespace", "pivot_root", "sandbox")
+    ):
+        return CodexError(
+            "SANDBOX_START_ERROR", "Codex sandbox could not start", signature="sandbox"
         )
     if any(
         value in text
@@ -331,7 +373,13 @@ class CodexRunner:
         if process.returncode != 0:
             error = classify_codex_failure(process.returncode or 1, stdout, stderr)
             error.exit_code = process.returncode
-            error.safe_diagnostic = redact_diagnostic(stdout, stderr)
+            error.stderr_byte_length = len(stderr)
+            error.safe_diagnostic = redact_diagnostic(
+                stdout,
+                stderr,
+                sensitive_values=(prompt,),
+                sensitive_paths=(checkout, self.settings.codex_home or Path("/var/lib/codex")),
+            )
             raise error
         if not stdout.strip():
             raise CodexError("CODEX_OUTPUT_MISSING", "Codex returned no structured output")
