@@ -220,7 +220,7 @@ async def test_installation_deleted_disables_without_deleting(app_client):
         repository = await session.scalar(
             select(RepositorySettings).where(RepositorySettings.installation_id == 9)
         )
-        assert repository and repository.enabled and not repository.installed
+        assert repository and not repository.enabled and not repository.installed
 
 
 @pytest.mark.asyncio
@@ -267,7 +267,7 @@ async def test_installation_repository_removed_is_disabled(app_client):
         repository = await session.scalar(
             select(RepositorySettings).where(RepositorySettings.installation_id == 11)
         )
-        assert repository and repository.enabled and not repository.installed
+        assert repository and not repository.enabled and not repository.installed
 
 
 @pytest.mark.asyncio
