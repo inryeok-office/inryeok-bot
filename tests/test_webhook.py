@@ -220,7 +220,7 @@ async def test_installation_deleted_disables_without_deleting(app_client):
         repository = await session.scalar(
             select(RepositorySettings).where(RepositorySettings.installation_id == 9)
         )
-        assert repository and not repository.enabled and not repository.installed
+        assert repository and repository.enabled and not repository.installed
 
 
 @pytest.mark.asyncio
@@ -267,7 +267,39 @@ async def test_installation_repository_removed_is_disabled(app_client):
         repository = await session.scalar(
             select(RepositorySettings).where(RepositorySettings.installation_id == 11)
         )
-        assert repository and not repository.enabled and not repository.installed
+        assert repository and repository.enabled and not repository.installed
+
+
+@pytest.mark.asyncio
+async def test_installation_sync_preserves_explicit_admin_disable(app_client):
+    client, factory = app_client
+    async with factory() as session:
+        session.add(
+            RepositorySettings(
+                installation_id=12,
+                repository_owner="acme",
+                repository_name="kept-off",
+                enabled=False,
+                auto_review=False,
+                override_enabled=False,
+                override_auto_review_enabled=False,
+            )
+        )
+        await session.commit()
+    payload = {
+        "action": "added",
+        "installation": {"id": 12, "account": {"login": "acme"}},
+        "repositories_added": [{"full_name": "acme/kept-off"}],
+        "repositories_removed": [],
+    }
+    body, headers = signed(payload, "installation_repositories", "repo-kept-off")
+    await client.post("/webhooks/github", content=body, headers=headers)
+    async with factory() as session:
+        repository = await session.scalar(
+            select(RepositorySettings).where(RepositorySettings.installation_id == 12)
+        )
+        assert repository and repository.installed is True
+        assert repository.enabled is False and repository.auto_review is False
 
 
 @pytest.mark.asyncio

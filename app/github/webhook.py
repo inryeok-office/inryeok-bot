@@ -201,7 +201,13 @@ async def github_webhook(
                 repository_setting = await _repository_settings(
                     session, installation_id, owner, name, settings
                 )
-                repository_setting.enabled = True
+                # Installation sync supplies defaults only.  Nullable
+                # overrides are the admin's explicit intent and must win over
+                # re-delivery, restart, or repository-list refresh.
+                if repository_setting.override_enabled is None:
+                    repository_setting.enabled = True
+                if repository_setting.override_auto_review_enabled is None:
+                    repository_setting.auto_review = True
                 repository_setting.installed = True
             await session.commit()
             return {"accepted": True, "synced": True}
