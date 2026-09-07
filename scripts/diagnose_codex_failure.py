@@ -215,13 +215,13 @@ def _fixture(root: Path) -> Path:
     return repo
 
 
-async def _one_codex_call(repo: Path) -> dict[str, Any]:
+async def _one_codex_call(repo: Path, execution_id: str) -> dict[str, Any]:
     try:
         output = await ExecutorRunner("unix:///run/inryeok-bot/executor.sock", 120).run(
             repo,
             "Review this small fixture and return structured output.",
             timeout=60,
-            execution_id="diagnostic-one-shot-000001",
+            execution_id=execution_id,
         )
     except CodexError as error:
         return {
@@ -279,7 +279,10 @@ def main() -> int:
             result["stages"].append(_stage("workspace_prepare", True))
             result["stages"].append(_stage("git_validation", (repo / ".git/HEAD").is_file()))
             result["codex_calls"] = 1
-            result["result"] = asyncio.run(_one_codex_call(repo))
+            # A fresh id makes each explicitly authorised one-shot diagnostic
+            # independent while still preventing transport retries within it.
+            result["execution_id"] = "diagnostic-" + uuid.uuid4().hex
+            result["result"] = asyncio.run(_one_codex_call(repo, result["execution_id"]))
         finally:
             shutil.rmtree(root, ignore_errors=True)
             if workspace_root is not None and workspace_root != root / "workspace":
