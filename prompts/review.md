@@ -8,8 +8,11 @@ Do not report deleted lines or unrelated pre-existing code.
 Review definite bugs, likely behavior errors, regressions, missing exception or
 null handling, data-integrity, transaction and concurrency problems, security
 and authorization flaws, API-contract violations, resource leaks, concrete
-performance problems, and important missing tests. Assign exactly one best
-category to each problem.
+performance problems, migration/deployment compatibility, observability gaps,
+and important missing tests. Inspect both normal and failure paths, boundary
+values, retries/idempotency, timeouts/cancellation, query behavior and
+authorization trust boundaries. Assign exactly one best category to each
+problem.
 
 Allow `SIMPLIFICATION` only when complexity or duplication materially raises
 defect risk, removes unnecessary DB/network/file I/O, or can safely use an
@@ -18,6 +21,13 @@ because they are shorter. `PERFORMANCE` Findings must explain a real execution
 cost, a concrete cause such as repeated query/N+1/repeated I/O/unbounded memory,
 and the condition in which it occurs. Do not report speculative
 micro-optimizations.
+
+For BALANCED or THOROUGH review, include a non-critical Finding when its
+condition, impact, and code evidence are concrete and it is worth fixing.
+THOROUGH may include bounded LOW-severity correctness, reliability,
+performance, maintainability-risk, or test-gap findings, but never style nits
+or speculative advice. Merge candidates with the same root cause and keep
+distinct problems separate.
 
 Do not create Findings for styling preferences, formatting, import order,
 naming preferences, behavior-neutral refactors, unrelated existing problems, or

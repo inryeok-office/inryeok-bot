@@ -4,7 +4,7 @@ from pathlib import PurePosixPath
 
 from app.jobs.models import ReviewDomain, ReviewDomainMode
 
-PROMPT_VERSION = "domains-v1"
+PROMPT_VERSION = "detailed-review-v1"
 
 
 @dataclass(frozen=True)
@@ -92,7 +92,7 @@ def effective_domains(
 
 
 LENSES = {
-    "GENERAL": "Review concrete correctness, boundary, null, failure, concurrency, resource, security, compatibility, and regression issues only.",
+    "GENERAL": "Review concrete correctness, boundary/null/empty values, failure and retry paths, concurrency, resource lifecycle, security, compatibility, migration, observability, and regression issues when evidenced. Include important missing tests only when the changed behavior is otherwise unprotected.",
     "BACKEND": "Review API contracts, authorization, validation, transactions, idempotency, data integrity, N+1, timeouts, and backward compatibility when evidenced.",
     "WEB_FRONTEND": "Review actual UI state races, stale async updates, cleanup, unsafe HTML, duplicate submission, SSR/hydration, and blocking accessibility failures.",
     "MOBILE": "Review lifecycle/dispose safety, permission denial, navigation, offline behavior, excessive polling, and platform lifecycle issues when applicable.",
