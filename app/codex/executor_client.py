@@ -51,6 +51,7 @@ class ExecutorRunner(ReviewRunner):
         model: str | None = None,
         timeout: int | None = None,
         execution_id: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ReviewOutput:
         archive = _archive_workspace(checkout)
         payload = {
@@ -59,6 +60,7 @@ class ExecutorRunner(ReviewRunner):
             "model": model,
             "timeout": timeout,
             "execution_id": execution_id,
+            "reasoning_effort": reasoning_effort,
         }
         request_timeout = max(self.timeout, float(timeout or 0) + 30.0)
         try:

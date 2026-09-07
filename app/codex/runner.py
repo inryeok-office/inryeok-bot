@@ -275,6 +275,7 @@ class ReviewRunner(Protocol):
         model: str | None = None,
         timeout: int | None = None,
         execution_id: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ReviewOutput: ...
 
 
@@ -289,6 +290,7 @@ class FakeRunner:
         model: str | None = None,
         timeout: int | None = None,
         execution_id: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ReviewOutput:
         return self.output
 
@@ -310,6 +312,7 @@ class CodexRunner:
         model: str | None = None,
         timeout: int | None = None,
         execution_id: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ReviewOutput:
         command = [
             self.settings.codex_command,
@@ -332,6 +335,12 @@ class CodexRunner:
             if model not in self.settings.allowed_codex_models:
                 raise CodexError("CODEX_MODEL_NOT_ALLOWED", "Codex model is not allowed")
             command[2:2] = ["--model", model]
+        if reasoning_effort:
+            if reasoning_effort not in {"low", "medium", "high"}:
+                raise CodexError(
+                    "CODEX_REASONING_NOT_ALLOWED", "Codex reasoning effort is not allowed"
+                )
+            command[2:2] = ["--config", f'model_reasoning_effort="{reasoning_effort}"']
         safe_environment = {
             "PATH",
             "HOME",

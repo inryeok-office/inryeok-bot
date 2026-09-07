@@ -322,6 +322,7 @@ async def update_global_settings(
     csrf: str = Form(..., alias="_csrf"),
     language: str = Form("ko"),
     review_profile: str = Form("BALANCED"),
+    reasoning_effort: str = Form("medium"),
     model: str = Form(""),
     max_findings: int = Form(10),
     minimum_confidence: float = Form(0.9),
@@ -348,7 +349,7 @@ async def update_global_settings(
 ) -> RedirectResponse:
     verify_csrf(csrf, principal, settings)
     try:
-        validate_choice(language, review_profile, model or None, settings)
+        validate_choice(language, review_profile, model or None, settings, reasoning_effort)
         if minimum_severity.upper() not in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}:
             raise ValueError("unsupported minimum severity")
         validate_paths(ignored_paths)
@@ -376,6 +377,7 @@ async def update_global_settings(
     if processing_paused is not None:
         value.processing_paused = processing_paused
     value.language, value.review_profile, value.model = language, review_profile, model or None
+    value.reasoning_effort = reasoning_effort
     value.max_findings, value.minimum_confidence, value.codex_timeout_seconds = (
         max_findings,
         minimum_confidence,
@@ -434,6 +436,7 @@ async def update_repository(
     override_language: str = Form(""),
     override_review_profile: str = Form(""),
     override_model: str = Form(""),
+    override_reasoning_effort: str = Form(""),
     override_max_findings: str = Form(""),
     override_minimum_confidence: str = Form(""),
     override_include_low_severity: str = Form("inherit"),
@@ -472,6 +475,7 @@ async def update_repository(
             override_review_profile or "BALANCED",
             override_model or None,
             settings,
+            override_reasoning_effort or "medium",
         )
         repository.override_enabled = _optional_bool(override_enabled)
         repository.override_auto_review_enabled = _optional_bool(override_auto_review_enabled)
@@ -479,6 +483,7 @@ async def update_repository(
         repository.override_language = override_language or None
         repository.override_review_profile = override_review_profile or None
         repository.override_model = override_model or None
+        repository.override_reasoning_effort = override_reasoning_effort or None
         repository.override_max_findings = _optional_int(override_max_findings, 1, 50)
         repository.override_minimum_confidence = _optional_float(
             override_minimum_confidence, 0.8, 1

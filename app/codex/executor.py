@@ -37,6 +37,7 @@ class ReviewRequest(BaseModel):
     archive: str = Field(min_length=1, max_length=35_000_000)
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_BYTES)
     model: str | None = Field(default=None, max_length=200)
+    reasoning_effort: str | None = Field(default=None, pattern=r"^(low|medium|high)$")
     timeout: int | None = Field(default=None, ge=30, le=3600)
     execution_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
 
@@ -126,7 +127,12 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
             raise HTTPException(status_code=413, detail="unsafe executor input") from exc
         try:
             output = await CodexRunner(settings).run(
-                workspace, request.prompt, request.model, request.timeout
+                workspace,
+                request.prompt,
+                request.model,
+                request.timeout,
+                request.execution_id,
+                request.reasoning_effort,
             )
         except CodexError as exc:
             status_code = {

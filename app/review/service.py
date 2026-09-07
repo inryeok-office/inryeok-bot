@@ -53,6 +53,9 @@ class ReviewService:
         effective = resolve(global_settings, config, self.github.settings)
         if not effective.enabled:
             raise ReviewSkipped("repository is disabled")
+        # Preserve the effective policy used by this job for auditability.
+        job.model = effective.model
+        job.reasoning_effort = effective.reasoning_effort
         patterns = list(effective.ignored_paths)
         await self._execute_checkout(job, config, patterns, effective, execution_id)
 
@@ -89,6 +92,7 @@ class ReviewService:
                     "include_low_severity": effective.include_low_severity,
                     "language": effective.language,
                     "review_profile": effective.review_profile,
+                    "reasoning_effort": effective.reasoning_effort,
                     "minimum_severity": effective.minimum_severity,
                     "enabled_categories": effective.enabled_categories,
                     "review_domains": domains,
@@ -103,6 +107,7 @@ class ReviewService:
                 effective.model,
                 effective.codex_timeout_seconds,
                 execution_id,
+                reasoning_effort=effective.reasoning_effort,
             )
         existing = set(
             (

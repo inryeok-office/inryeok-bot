@@ -4,6 +4,7 @@ from fnmatch import fnmatch
 from app.config import Settings
 from app.jobs.models import (
     GlobalReviewSettings,
+    ReasoningEffort,
     RepositorySettings,
     ReviewDomainMode,
     ReviewLanguage,
@@ -23,6 +24,7 @@ class EffectiveReviewSettings:
     language: str
     review_profile: str
     model: str | None
+    reasoning_effort: str
     max_findings: int
     minimum_confidence: float
     include_low_severity: bool
@@ -40,13 +42,21 @@ class EffectiveReviewSettings:
     manual_review_domains: str
 
 
-def validate_choice(language: str, profile: str, model: str | None, settings: Settings) -> None:
+def validate_choice(
+    language: str,
+    profile: str,
+    model: str | None,
+    settings: Settings,
+    reasoning_effort: str = ReasoningEffort.MEDIUM.value,
+) -> None:
     if language not in {item.value for item in ReviewLanguage}:
         raise ValueError("unsupported language")
     if profile not in {item.value for item in ReviewProfile}:
         raise ValueError("unsupported review profile")
     if model and model not in settings.allowed_codex_models:
         raise ValueError("model is not allowed")
+    if reasoning_effort not in {item.value for item in ReasoningEffort}:
+        raise ValueError("reasoning effort is not allowed")
 
 
 def validate_paths(patterns: str) -> tuple[str, ...]:
@@ -73,7 +83,11 @@ def resolve(
         global_settings.review_profile or settings.default_review_profile,
     )
     model = choose(repository.override_model, global_settings.model)
-    validate_choice(language, profile, model, settings)
+    reasoning_effort = choose(
+        repository.override_reasoning_effort,
+        global_settings.reasoning_effort or ReasoningEffort.MEDIUM.value,
+    )
+    validate_choice(language, profile, model, settings, reasoning_effort)
     confidence = max(
         MIN_CONFIDENCE,
         choose(repository.override_minimum_confidence, global_settings.minimum_confidence or 0.9),
@@ -124,6 +138,7 @@ def resolve(
         language=language,
         review_profile=profile,
         model=model,
+        reasoning_effort=reasoning_effort,
         max_findings=maximum,
         minimum_confidence=confidence,
         include_low_severity=choose(

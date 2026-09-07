@@ -47,6 +47,12 @@ class ReviewProfile(StrEnum):
     THOROUGH = "THOROUGH"
 
 
+class ReasoningEffort(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 class ReviewDomainMode(StrEnum):
     AUTO = "AUTO"
     MANUAL = "MANUAL"
@@ -113,6 +119,8 @@ class ReviewJob(Base):
     effective_review_domains: Mapped[str | None] = mapped_column(Text)
     detection_reasons: Mapped[str | None] = mapped_column(Text)
     prompt_version: Mapped[str | None] = mapped_column(String(32))
+    model: Mapped[str | None] = mapped_column(String(128))
+    reasoning_effort: Mapped[str | None] = mapped_column(String(16))
     runs: Mapped[list["ReviewRun"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
@@ -149,6 +157,7 @@ class RepositorySettings(Base):
     override_language: Mapped[str | None] = mapped_column(String(8))
     override_review_profile: Mapped[str | None] = mapped_column(String(32))
     override_model: Mapped[str | None] = mapped_column(String(128))
+    override_reasoning_effort: Mapped[str | None] = mapped_column(String(16))
     override_max_findings: Mapped[int | None] = mapped_column(Integer)
     override_minimum_confidence: Mapped[float | None] = mapped_column(Float)
     override_include_low_severity: Mapped[bool | None] = mapped_column(Boolean)
@@ -175,6 +184,7 @@ class GlobalReviewSettings(Base):
     language: Mapped[str] = mapped_column(String(8), default=ReviewLanguage.KO.value)
     review_profile: Mapped[str] = mapped_column(String(32), default=ReviewProfile.BALANCED.value)
     model: Mapped[str | None] = mapped_column(String(128))
+    reasoning_effort: Mapped[str] = mapped_column(String(16), default="medium")
     max_findings: Mapped[int] = mapped_column(Integer, default=10)
     minimum_confidence: Mapped[float] = mapped_column(Float, default=0.9)
     include_low_severity: Mapped[bool] = mapped_column(Boolean, default=False)

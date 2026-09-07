@@ -172,6 +172,21 @@ async def test_codex_runner_uses_managed_read_only_profile(monkeypatch, tmp_path
     assert "GITHUB_WEBHOOK_SECRET" not in captured_env
 
 
+@pytest.mark.asyncio
+async def test_codex_runner_passes_supported_reasoning_config(monkeypatch, tmp_path) -> None:
+    captured: tuple[object, ...] = ()
+
+    async def create(*args: object, **kwargs: object) -> FakeProcess:
+        nonlocal captured
+        captured = args
+        return FakeProcess()
+
+    monkeypatch.setattr("app.codex.runner.asyncio.create_subprocess_exec", create)
+    runner = CodexRunner(Settings(environment="test", codex_command="codex"))
+    await runner.run(tmp_path, "review this", reasoning_effort="high")
+    assert 'model_reasoning_effort="high"' in captured
+
+
 def test_codex_runner_uses_explicit_schema_path(monkeypatch, tmp_path) -> None:
     from app.codex.runner import CodexRunner
 

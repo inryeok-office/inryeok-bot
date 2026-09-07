@@ -78,3 +78,16 @@ def test_invalid_model_and_outside_ignore_path_are_rejected() -> None:
     repository.override_ignored_paths = "../outside/**"
     with pytest.raises(ValueError, match="ignore path"):
         resolve(GlobalReviewSettings(id=1), repository, _settings())
+
+
+def test_reasoning_effort_is_inherited_and_validated() -> None:
+    global_settings = GlobalReviewSettings(id=1, reasoning_effort="high")
+    effective = resolve(global_settings, _repository(), _settings())
+    assert effective.reasoning_effort == "high"
+
+    repository = _repository()
+    repository.override_reasoning_effort = "low"
+    assert resolve(global_settings, repository, _settings()).reasoning_effort == "low"
+    repository.override_reasoning_effort = "maximum"
+    with pytest.raises(ValueError, match="reasoning effort"):
+        resolve(global_settings, repository, _settings())
