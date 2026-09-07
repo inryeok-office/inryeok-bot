@@ -1,0 +1,8 @@
+{% macro status_label(value) -%}
+  {{ {'PENDING':'대기','RETRY_PENDING':'재시도 예약','SCHEDULED':'예약','RUNNING':'실행 중','SUCCEEDED':'성공','FAILED':'실패','SKIPPED':'건너뜀','CANCELLED':'취소','PAUSED':'일시중지','COMMAND':'수동 요청','AUTO':'자동 리뷰'}.get(value|string, value) }}
+{%- endmacro %}
+{% macro status_class(value) -%}
+  {%- if value|string in ['SUCCEEDED','ACTIVE','ENABLED'] -%}success{%- elif value|string in ['FAILED','CANCELLED'] -%}danger{%- elif value|string in ['RUNNING','COMMAND'] -%}info{%- elif value|string in ['PENDING','RETRY_PENDING','SCHEDULED','PAUSED'] -%}warning{%- else -%}neutral{%- endif -%}
+{%- endmacro %}
+{% macro status(value, label=None) -%}<span class="status {{ status_class(value) }}"><span class="status-dot" aria-hidden="true"></span>{{ label or status_label(value) }}</span>{%- endmacro %}
+{% macro breadcrumb(items) -%}<nav class="breadcrumb" aria-label="경로">{% for item in items %}{% if not loop.first %}<span aria-hidden="true">/</span>{% endif %}{% if item.href %}<a href="{{ item.href }}">{{ item.label }}</a>{% else %}<span>{{ item.label }}</span>{% endif %}{% endfor %}</nav>{%- endmacro %}

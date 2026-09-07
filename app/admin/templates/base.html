@@ -5,29 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>{% block title %}관리자 콘솔{% endblock %} · {{ app_name }}</title>
-  <link rel="stylesheet" href="/admin/static/admin.css">
+  <link rel="stylesheet" href="/admin/static/admin.css?v=20260907">
 </head>
 <body>
   <div class="shell">
-    <aside class="sidebar" aria-label="관리자 내비게이션">
-      <div class="brand">{{ app_name }}<small>운영 관리자 콘솔</small></div>
-      <nav class="nav">
+    <aside class="sidebar" aria-label="관리자 메뉴">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">◆</span><span>{{ app_name }}</span><small>운영 관리자 콘솔</small></div>
+      <nav class="nav" aria-label="주 메뉴">
         <a href="/admin" {% if request.url.path == '/admin' %}aria-current="page"{% endif %}>대시보드</a>
         <a href="/admin/repositories" {% if request.url.path.startswith('/admin/repositories') %}aria-current="page"{% endif %}>저장소</a>
         <a href="/admin/jobs" {% if request.url.path.startswith('/admin/jobs') %}aria-current="page"{% endif %}>리뷰 작업</a>
         <a href="/admin/settings" {% if request.url.path == '/admin/settings' %}aria-current="page"{% endif %}>전역 설정</a>
         <a href="/admin/audit" {% if request.url.path == '/admin/audit' %}aria-current="page"{% endif %}>감사 로그</a>
+        <a href="/admin#operations">운영 상태</a>
       </nav>
-      <div class="sidebar-footer">관리자: {{ principal.github_login }}<br>변경 사항은 감사 로그에 기록됩니다.</div>
+      <div class="sidebar-footer"><span class="muted-label">관리자</span><strong>{{ principal.github_login }}</strong><form method="post" action="/auth/github/logout"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="button ghost" type="submit">로그아웃</button></form></div>
     </aside>
     <div class="main">
-      <header class="topbar">
-        <div class="identity">{{ request.url.path }}</div>
-        <form method="post" action="/auth/github/logout">
-          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-          <button class="button secondary" type="submit">로그아웃</button>
-        </form>
-      </header>
+      <header class="topbar"><div class="topbar-title">{{ app_name }} <span>/</span> 관리자</div><div class="topbar-meta">{{ principal.github_login }}</div></header>
       <main class="content">{% block content %}{% endblock %}</main>
     </div>
   </div>

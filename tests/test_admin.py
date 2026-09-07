@@ -102,6 +102,17 @@ async def test_admin_static_design_system_is_local(app_client) -> None:
     assert "unpkg" not in response.text
 
 
+@pytest.mark.asyncio
+async def test_admin_console_uses_korean_operational_labels(app_client) -> None:
+    client, _, _, _, _ = await authenticated_repository(app_client)
+    response = await client.get("/admin")
+    assert response.status_code == 200
+    assert "대시보드" in response.text
+    assert "운영 상태" in response.text
+    assert "리뷰 작업" in response.text
+    assert "Review jobs" not in response.text
+
+
 def test_unlisted_accounts_can_only_be_enabled_explicitly_in_development() -> None:
     development = Settings(
         environment="development",
@@ -206,7 +217,7 @@ async def test_audit_log_page_is_available_to_authenticated_admin(app_client) ->
     client, _, _, _, _ = await authenticated_repository(app_client)
     response = await client.get("/admin/audit")
     assert response.status_code == 200
-    assert "Audit log" in response.text
+    assert "감사 로그" in response.text
 
 
 @pytest.mark.asyncio

@@ -214,21 +214,29 @@ async def job_detail(
 @router.get("/repositories", response_class=HTMLResponse)
 async def repositories(
     request: Request,
+    q: str | None = None,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     principal: AdminPrincipal = Depends(require_admin),
 ) -> HTMLResponse:
+    query = select(RepositorySettings).where(
+        _account_filter(RepositorySettings.repository_owner, settings)
+    )
+    if q:
+        pattern = f"%{q.strip()}%"
+        query = query.where(
+            RepositorySettings.repository_owner.ilike(pattern)
+            | RepositorySettings.repository_name.ilike(pattern)
+        )
     values = (
         await session.scalars(
-            select(RepositorySettings)
-            .order_by(RepositorySettings.repository_owner, RepositorySettings.repository_name)
-            .where(_account_filter(RepositorySettings.repository_owner, settings))
+            query.order_by(RepositorySettings.repository_owner, RepositorySettings.repository_name)
         )
     ).all()
     return templates.TemplateResponse(
         request,
         "repositories.html",
-        _context(request, principal, settings, repositories=values),
+        _context(request, principal, settings, repositories=values, repository_query=q or ""),
     )
 
 
