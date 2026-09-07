@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.admin.oauth import router as oauth_router
@@ -22,6 +23,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="GitHub Codex Review Bot", version="0.1.0", lifespan=lifespan)
+app.mount("/admin/static", StaticFiles(directory="app/admin/static"), name="admin-static")
 app.include_router(webhook_router)
 app.include_router(admin_router)
 app.include_router(oauth_router)

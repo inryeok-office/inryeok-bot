@@ -1,1 +1,35 @@
-<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="https://unpkg.com/htmx.org@2.0.6"></script><title>{{ app_name }} Admin</title><style>body{font:15px system-ui;max-width:1100px;margin:auto;padding:1rem;color:#17202a}nav{display:flex;gap:1rem;align-items:center}nav form{margin-left:auto}table{width:100%;border-collapse:collapse;margin:1rem 0}th,td{padding:.55rem;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}input,textarea,select{max-width:100%;padding:.35rem}button{padding:.4rem .7rem}.error{color:#a00}.muted{color:#687078}@media(max-width:700px){table{display:block;overflow-x:auto}}</style></head><body><nav><a href="/admin">Overview</a><a href="/admin/jobs">Jobs</a><a href="/admin/repositories">Repositories</a><a href="/admin/settings">Settings</a><a href="/admin/audit">Audit</a><form method="post" action="/auth/github/logout"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button>Logout</button></form></nav>{% block content %}{% endblock %}</body></html>
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{% block title %}관리자 콘솔{% endblock %} · {{ app_name }}</title>
+  <link rel="stylesheet" href="/admin/static/admin.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="관리자 내비게이션">
+      <div class="brand">{{ app_name }}<small>운영 관리자 콘솔</small></div>
+      <nav class="nav">
+        <a href="/admin" {% if request.url.path == '/admin' %}aria-current="page"{% endif %}>대시보드</a>
+        <a href="/admin/repositories" {% if request.url.path.startswith('/admin/repositories') %}aria-current="page"{% endif %}>저장소</a>
+        <a href="/admin/jobs" {% if request.url.path.startswith('/admin/jobs') %}aria-current="page"{% endif %}>리뷰 작업</a>
+        <a href="/admin/settings" {% if request.url.path == '/admin/settings' %}aria-current="page"{% endif %}>전역 설정</a>
+        <a href="/admin/audit" {% if request.url.path == '/admin/audit' %}aria-current="page"{% endif %}>감사 로그</a>
+      </nav>
+      <div class="sidebar-footer">관리자: {{ principal.github_login }}<br>변경 사항은 감사 로그에 기록됩니다.</div>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+        <div class="identity">{{ request.url.path }}</div>
+        <form method="post" action="/auth/github/logout">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button class="button secondary" type="submit">로그아웃</button>
+        </form>
+      </header>
+      <main class="content">{% block content %}{% endblock %}</main>
+    </div>
+  </div>
+</body>
+</html>

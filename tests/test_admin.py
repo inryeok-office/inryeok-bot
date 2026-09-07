@@ -93,6 +93,15 @@ def test_production_rejects_empty_account_allowlist() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_admin_static_design_system_is_local(app_client) -> None:
+    client, _ = app_client
+    response = await client.get("/admin/static/admin.css")
+    assert response.status_code == 200
+    assert "--primary:" in response.text
+    assert "unpkg" not in response.text
+
+
 def test_unlisted_accounts_can_only_be_enabled_explicitly_in_development() -> None:
     development = Settings(
         environment="development",

@@ -1,2 +1,8 @@
-{% extends "base.html" %}{% block content %}<h1>Recent jobs</h1>{% include "_jobs.html" %}{% endblock %}
-
+{% extends "base.html" %}
+{% block title %}Review jobs{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Review jobs</h1><p>Inspect safe status and failure metadata from webhook-created jobs.</p></div></div>
+<div class="card section"><form class="fields" method="get"><div class="field"><label for="repository">Repository (owner/name)</label><input id="repository" name="repository" value="{{ repository_filter or '' }}" placeholder="inryeok-office/example"></div><div class="field"><label for="status">Status</label><select id="status" name="status_filter"><option value="">All statuses</option>{% for value in ['PENDING','RUNNING','SUCCEEDED','FAILED','SKIPPED'] %}<option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div><div class="actions"><button class="button primary" type="submit">Apply filters</button><a class="button secondary" href="/admin/jobs">Clear</a></div></form></div>
+<div class="banner warning"><strong>Execution payloads are hidden.</strong> Prompts, source, stdout/stderr, tokens, and credentials are never displayed here.</div>
+{% include "_jobs.html" %}
+{% endblock %}

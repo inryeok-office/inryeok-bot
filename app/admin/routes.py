@@ -14,9 +14,11 @@ from app.db.session import get_session
 from app.jobs.models import (
     AdminAuditLog,
     GlobalReviewSettings,
+    JobStatus,
     RepositorySettings,
     ReviewDomain,
     ReviewJob,
+    ReviewRun,
 )
 from app.jobs.repository import JobRepository
 from app.review.domains import PROMPT_VERSION, effective_domains
@@ -125,6 +127,15 @@ async def index(
         )
     ).all()
     global_settings = await session.get(GlobalReviewSettings, 1)
+    job_counts = {
+        status.value: await session.scalar(
+            select(func.count(ReviewJob.id)).where(
+                ReviewJob.status == status,
+                _account_filter(ReviewJob.repository_owner, settings),
+            )
+        )
+        for status in JobStatus
+    }
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -135,6 +146,7 @@ async def index(
             jobs=jobs,
             repositories=repositories,
             global_settings=global_settings,
+            job_counts=job_counts,
         ),
     )
 
@@ -142,25 +154,38 @@ async def index(
 @router.get("/jobs", response_class=HTMLResponse)
 async def jobs(
     request: Request,
+    repository: str | None = None,
+    status_filter: str | None = None,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     principal: AdminPrincipal = Depends(require_admin),
 ) -> HTMLResponse:
-    values = (
-        await session.scalars(
-            select(ReviewJob)
-            .where(_account_filter(ReviewJob.repository_owner, settings))
-            .order_by(ReviewJob.created_at.desc())
-            .limit(100)
+    query = select(ReviewJob).where(_account_filter(ReviewJob.repository_owner, settings))
+    if repository and "/" in repository:
+        owner, name = repository.split("/", 1)
+        query = query.where(
+            func.lower(ReviewJob.repository_owner) == owner.casefold(),
+            func.lower(ReviewJob.repository_name) == name.casefold(),
         )
-    ).all()
+    if status_filter and status_filter in {item.value for item in JobStatus}:
+        query = query.where(ReviewJob.status == JobStatus(status_filter))
+    values = (await session.scalars(query.order_by(ReviewJob.created_at.desc()).limit(100))).all()
     global_settings = await session.get(GlobalReviewSettings, 1)
     if global_settings is None:
         global_settings = GlobalReviewSettings(id=1)
         session.add(global_settings)
         await session.commit()
     return templates.TemplateResponse(
-        request, "jobs.html", _context(request, principal, settings, jobs=values)
+        request,
+        "jobs.html",
+        _context(
+            request,
+            principal,
+            settings,
+            jobs=values,
+            repository_filter=repository,
+            status_filter=status_filter,
+        ),
     )
 
 
@@ -176,8 +201,13 @@ async def job_detail(
     if not job:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
     _ensure_allowed(job.repository_owner, settings)
+    review_run = await session.scalar(
+        select(ReviewRun).where(ReviewRun.job_id == job.id).order_by(ReviewRun.id.desc())
+    )
     return templates.TemplateResponse(
-        request, "job_detail.html", _context(request, principal, settings, job=job)
+        request,
+        "job_detail.html",
+        _context(request, principal, settings, job=job, review_run=review_run),
     )
 
 
