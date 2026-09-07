@@ -228,6 +228,7 @@ async def _one_codex_call(repo: Path) -> dict[str, Any]:
             "error_code": error.code,
             "retryable": error.retryable,
             "matched_safe_signature": error.signature,
+            "safe_diagnostic": list(error.safe_diagnostic),
         }
     return {
         "stage": "structured_output",

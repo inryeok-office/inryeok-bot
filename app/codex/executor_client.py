@@ -100,6 +100,11 @@ class ExecutorRunner(ReviewRunner):
             raw_exit_code = body.get("exit_code")
             if isinstance(raw_exit_code, int):
                 codex_error.exit_code = raw_exit_code
+            raw_diagnostic = body.get("safe_diagnostic")
+            if isinstance(raw_diagnostic, list):
+                codex_error.safe_diagnostic = tuple(
+                    item for item in raw_diagnostic if isinstance(item, str)
+                )
             raise codex_error
         try:
             return ReviewOutput.model_validate(response.json())

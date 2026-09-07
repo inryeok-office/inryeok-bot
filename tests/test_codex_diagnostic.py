@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from app.codex.runner import CodexError
+from app.codex.runner import CodexError, redact_diagnostic
 from scripts.diagnose_codex_failure import _one_codex_call, _sandbox_status
 
 
@@ -39,3 +39,9 @@ def test_sandbox_command_not_found_is_not_sandbox_failure(monkeypatch) -> None:
     ok, details = _sandbox_status("/missing/command")
     assert ok is False
     assert details["error_code"] == "DIAGNOSTIC_COMMAND_ERROR"
+
+
+def test_diagnostic_redacts_credentials_and_limits_lines() -> None:
+    lines = redact_diagnostic(b"Authorization: Bearer secret-token\n" * 20, b"stderr")
+    assert len(lines) <= 10
+    assert all("secret-token" not in line for line in lines)

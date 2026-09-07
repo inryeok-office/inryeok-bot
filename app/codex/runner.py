@@ -12,6 +12,7 @@ from app.codex.schemas import ReviewOutput
 from app.config import Settings
 
 MAX_PROCESS_OUTPUT = 2_000_000
+MAX_SAFE_DIAGNOSTIC_BYTES = 32_000
 
 
 def _process_group_options() -> dict[str, Any]:
@@ -66,6 +67,7 @@ class CodexError(RuntimeError):
         self.retry_at = retry_at
         self.signature = signature or code
         self.exit_code: int | None = None
+        self.safe_diagnostic: tuple[str, ...] = ()
 
 
 def _error_text(stdout: bytes, stderr: bytes) -> str:
@@ -79,6 +81,30 @@ def _error_text(stdout: bytes, stderr: bytes) -> str:
         if isinstance(decoded, dict):
             parts.extend(str(value) for value in decoded.values() if isinstance(value, str))
     return "\n".join(parts).casefold()
+
+
+def redact_diagnostic(stdout: bytes, stderr: bytes) -> tuple[str, ...]:
+    """Return bounded operator diagnostics without credentials or raw payloads."""
+    text = (stdout + b"\n" + stderr).decode(errors="replace")
+    text = re.sub(r"(?i)(authorization)\s*[:=]\s*bearer\s+\S+", r"\1=[REDACTED]", text)
+    text = re.sub(
+        r"(?i)(authorization|cookie|token|password|secret|api[_-]?key)\s*[:=]\s*\S+",
+        r"\1=[REDACTED]",
+        text,
+    )
+    text = re.sub(r"(?i)bearer\s+\S+", "Bearer [REDACTED]", text)
+    text = re.sub(r"\bsk-[A-Za-z0-9_-]+", "[REDACTED]", text)
+    lines: list[str] = []
+    used = 0
+    for line in text.splitlines():
+        safe = line[:500]
+        if used + len(safe) > MAX_SAFE_DIAGNOSTIC_BYTES:
+            break
+        lines.append(safe)
+        used += len(safe)
+        if len(lines) == 10:
+            break
+    return tuple(lines)
 
 
 def _retry_at(text: str) -> datetime | None:
@@ -297,6 +323,7 @@ class CodexRunner:
         if process.returncode != 0:
             error = classify_codex_failure(process.returncode or 1, stdout, stderr)
             error.exit_code = process.returncode
+            error.safe_diagnostic = redact_diagnostic(stdout, stderr)
             raise error
         if not stdout.strip():
             raise CodexError("CODEX_OUTPUT_MISSING", "Codex returned no structured output")
