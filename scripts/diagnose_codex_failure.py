@@ -272,8 +272,13 @@ def main() -> int:
             os.chmod(root, 0o700)
             if os.name != "nt" and _uid() == 0 and _pwd is not None:
                 account = _pwd.getpwnam(EXECUTOR_USER)
-                os.chown(root, account.pw_uid, account.pw_gid)  # type: ignore[attr-defined]
-            repo = _fixture(root)
+                workspace_root = root / "workspace"
+                workspace_root.mkdir(mode=0o700)
+                os.chown(workspace_root, account.pw_uid, account.pw_gid)  # type: ignore[attr-defined]
+            else:
+                workspace_root = root / "workspace"
+                workspace_root.mkdir(mode=0o700)
+            repo = _fixture(workspace_root)
             result["stages"].append(_stage("workspace_prepare", True))
             result["stages"].append(_stage("git_validation", (repo / ".git/HEAD").is_file()))
             result["codex_calls"] = 1
