@@ -124,6 +124,10 @@ def _static_checks() -> list[dict[str, Any]]:
         ok, details = _command_status(argv)
         checks.append(_stage(name, ok, **details))
     ok, details = _command_status([CODEX, "sandbox", "linux", "--help"], classify=True)
+    if not ok:
+        details.update(
+            {"error_code": "SANDBOX_START_ERROR", "matched_safe_signature": "sandbox_start"}
+        )
     checks.append(_stage("sandbox_start", ok, **details))
     try:
         with MANAGED_CONFIG.open("rb") as stream:
