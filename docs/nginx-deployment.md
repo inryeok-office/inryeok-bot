@@ -22,6 +22,10 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo certbot renew --dry-run
 ```
 
+Install `deploy/nginx/certbot-reload-nginx.sh` as a root-owned executable under
+`/etc/letsencrypt/renewal-hooks/deploy/` so a renewed certificate is loaded by
+Nginx automatically.
+
 Nginx는 `127.0.0.1:8000`만 upstream으로 사용하며 PostgreSQL과 애플리케이션
 포트를 공인망에 노출하지 않는다. Webhook body 제한은 애플리케이션 제한과 같은
 2 MiB로 유지한다.
