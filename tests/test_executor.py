@@ -93,6 +93,9 @@ async def test_executor_runner_preserves_safe_error_category(monkeypatch, tmp_pa
 @pytest.mark.asyncio
 async def test_executor_transport_disconnect_is_safe_unknown_outcome(monkeypatch, tmp_path) -> None:
     class Client:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
         async def __aenter__(self) -> "Client":
             return self
 
