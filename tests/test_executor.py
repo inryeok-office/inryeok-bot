@@ -164,6 +164,35 @@ async def test_executor_settings_do_not_read_dotenv(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_executor_uses_dedicated_workspace_root(monkeypatch, tmp_path) -> None:
+    seen: dict[str, object] = {}
+
+    class SettingsStub:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+    class RunnerStub:
+        def __init__(self, settings: object) -> None:
+            pass
+
+        async def run(self, workspace: object, *args: object) -> ReviewOutput:
+            seen["workspace"] = workspace
+            return ReviewOutput(summary="ok", findings=[])
+
+    monkeypatch.setenv("CODEX_WORKSPACE_ROOT", str(tmp_path / "executor-workspaces"))
+    monkeypatch.setattr("app.codex.executor.Settings", SettingsStub)
+    monkeypatch.setattr("app.codex.executor.CodexRunner", RunnerStub)
+    request = ReviewRequest(
+        archive=base64.b64encode(_archive()).decode(),
+        prompt="review",
+        execution_id="workspace-root-check-123",
+    )
+
+    assert await _run_review(request) == {"summary": "ok", "findings": []}
+    assert str(seen["workspace"]).startswith(str(tmp_path / "executor-workspaces"))
+
+
+@pytest.mark.asyncio
 async def test_executor_rejects_duplicate_execution_id(monkeypatch) -> None:
     monkeypatch.setattr("app.codex.executor._seen_execution_ids", set())
     request = ReviewRequest(

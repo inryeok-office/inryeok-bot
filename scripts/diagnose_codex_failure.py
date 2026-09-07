@@ -185,6 +185,7 @@ def _unit_has_expected_paths() -> bool:
     required = (
         "WorkingDirectory=/opt/inryeok-bot/executor",
         "Environment=CODEX_SCHEMA_PATH=/opt/inryeok-bot/app/review-schema.json",
+        "Environment=CODEX_WORKSPACE_ROOT=/var/lib/inryeok-bot-executor/workspaces",
         "ProtectHome=yes",
         "ProtectSystem=strict",
         "ReadWritePaths=/var/lib/inryeok-bot-executor /run/inryeok-bot",
