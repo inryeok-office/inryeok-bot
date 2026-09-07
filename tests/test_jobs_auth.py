@@ -13,6 +13,7 @@ from app.github.auth import InstallationTokenProvider
 from app.jobs.models import (
     GlobalReviewSettings,
     JobStatus,
+    RepositorySettings,
     ReviewFailureNotice,
     ReviewJob,
     TriggerType,
@@ -31,6 +32,7 @@ def test_claim_uses_postgres_skip_locked():
     sql = str(claim_statement().compile(dialect=postgresql.dialect()))
     assert "SKIP LOCKED" in sql
     assert "FOR UPDATE" in sql
+    assert "processing_paused" in sql
 
 
 @pytest.mark.asyncio
@@ -102,6 +104,35 @@ async def test_claim_is_paused_by_global_processing_flag(app_client) -> None:
         session.add(
             ReviewJob(
                 delivery_id="paused",
+                installation_id=1,
+                repository_owner="o",
+                repository_name="r",
+                pull_request_number=1,
+                base_sha="a" * 40,
+                head_sha="b" * 40,
+                trigger_type=TriggerType.COMMAND,
+            )
+        )
+        await session.commit()
+        assert await JobRepository(session).claim_next() is None
+
+
+@pytest.mark.asyncio
+async def test_claim_skips_disabled_repository(app_client) -> None:
+    _, factory = app_client
+    async with factory() as session:
+        session.add(
+            RepositorySettings(
+                installation_id=1,
+                repository_owner="o",
+                repository_name="r",
+                enabled=False,
+                installed=True,
+            )
+        )
+        session.add(
+            ReviewJob(
+                delivery_id="disabled-repository",
                 installation_id=1,
                 repository_owner="o",
                 repository_name="r",

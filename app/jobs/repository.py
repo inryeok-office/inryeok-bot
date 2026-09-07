@@ -1,12 +1,13 @@
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, func, or_, select, update
+from sqlalchemy import Select, and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.jobs.models import (
     GlobalReviewSettings,
     JobStatus,
+    RepositorySettings,
     ReviewFailureNotice,
     ReviewJob,
     TriggerType,
@@ -20,9 +21,35 @@ class QueueCapacityError(RuntimeError):
 def claim_statement() -> Select[tuple[ReviewJob]]:
     return (
         select(ReviewJob)
+        # Evaluate the pause switch in the same statement as the row claim.  The
+        # previous two-step read allowed a worker to pass the pause check just
+        # before an administrator paused the queue.
+        .outerjoin(GlobalReviewSettings, GlobalReviewSettings.id == 1)
+        # A repository row may not exist for legacy jobs; those remain claimable
+        # so a settings backfill cannot strand existing work.  Once a row exists,
+        # installation and enabled state are authoritative.
+        .outerjoin(
+            RepositorySettings,
+            and_(
+                RepositorySettings.installation_id == ReviewJob.installation_id,
+                RepositorySettings.repository_owner == ReviewJob.repository_owner,
+                RepositorySettings.repository_name == ReviewJob.repository_name,
+            ),
+        )
         .where(
             ReviewJob.status == JobStatus.PENDING,
             (ReviewJob.not_before.is_(None) | (ReviewJob.not_before <= datetime.now(UTC))),
+            or_(
+                GlobalReviewSettings.id.is_(None),
+                GlobalReviewSettings.processing_paused.is_(False),
+            ),
+            or_(
+                RepositorySettings.id.is_(None),
+                and_(
+                    RepositorySettings.enabled.is_(True),
+                    RepositorySettings.installed.is_(True),
+                ),
+            ),
         )
         .order_by(ReviewJob.created_at, ReviewJob.id)
         .with_for_update(skip_locked=True)
@@ -100,9 +127,6 @@ class JobRepository:
             return existing, False
 
     async def claim_next(self) -> ReviewJob | None:
-        settings = await self.session.get(GlobalReviewSettings, 1)
-        if settings is not None and settings.processing_paused:
-            return None
         job = await self.session.scalar(claim_statement())
         if job is None:
             return None
