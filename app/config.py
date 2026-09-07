@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     stale_running_seconds: int = Field(1800, ge=60)
     codex_model_allowlist: str = ""
     default_review_language: str = "ko"
-    default_review_profile: str = "BALANCED"
+    default_review_profile: str = "THOROUGH"
 
     @field_validator("default_ignore_patterns", mode="before")
     @classmethod
