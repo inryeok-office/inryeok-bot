@@ -165,7 +165,7 @@ async def test_codex_runner_uses_managed_read_only_profile(monkeypatch, tmp_path
     assert captured[:2] == ("codex", "exec")
     assert "--output-schema" in captured and "--ignore-rules" in captured
     assert "--ignore-user-config" in captured
-    assert "--ask-for-approval" in captured and "never" in captured
+    assert "--sandbox" in captured and "read-only" in captured
     assert 'default_permissions="inryeok_review_read_only"' in captured
     assert captured_cwd == tmp_path
     assert "GITHUB_WEBHOOK_SECRET" not in captured_env

@@ -182,9 +182,17 @@ def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> Cod
             "Codex execution permission denied",
             signature="permission_denied",
         )
-    if any(value in text for value in ("unsupported option", "unknown option", "invalid config")):
+    if any(
+        value in text
+        for value in (
+            "unsupported option",
+            "unknown option",
+            "unexpected argument",
+            "invalid config",
+        )
+    ):
         return CodexError(
-            "CODEX_CONFIGURATION",
+            "CLI_ARGUMENT_ERROR",
             "Codex CLI configuration is unsupported",
             signature="configuration",
         )
@@ -264,8 +272,8 @@ class CodexRunner:
             "--ephemeral",
             "--ignore-user-config",
             "--ignore-rules",
-            "--ask-for-approval",
-            "never",
+            "--sandbox",
+            "read-only",
             "--config",
             'default_permissions="inryeok_review_read_only"',
             "--color",
