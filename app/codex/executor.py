@@ -72,6 +72,7 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
     command = os.environ.get("CODEX_COMMAND", "codex")
     home = Path(os.environ.get("CODEX_HOME", "/var/lib/codex"))
     settings = Settings(
+        _env_file=None,
         environment="test",
         public_base_url="",
         codex_command=command,

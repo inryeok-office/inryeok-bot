@@ -4,9 +4,10 @@ import tarfile
 
 import pytest
 
-from app.codex.executor import _extract_archive
+from app.codex.executor import ReviewRequest, _extract_archive, _run_review
 from app.codex.executor_client import ExecutorRunner, _archive_workspace
 from app.codex.runner import CodexError
+from app.codex.schemas import ReviewOutput
 
 
 @pytest.mark.asyncio
@@ -78,3 +79,28 @@ def test_workspace_archive_rejects_symlink(tmp_path) -> None:
         pytest.skip(f"symlink creation unavailable: {exc}")
     with pytest.raises(CodexError, match="symlink"):
         _archive_workspace(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_executor_settings_do_not_read_dotenv(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    class SettingsStub:
+        def __init__(self, **kwargs: object) -> None:
+            seen.update(kwargs)
+
+    class RunnerStub:
+        def __init__(self, settings: object) -> None:
+            assert isinstance(settings, SettingsStub)
+
+        async def run(self, *args: object) -> ReviewOutput:
+            return ReviewOutput(summary="ok", findings=[])
+
+    monkeypatch.setattr("app.codex.executor.Settings", SettingsStub)
+    monkeypatch.setattr("app.codex.executor.CodexRunner", RunnerStub)
+    request = ReviewRequest(archive=base64.b64encode(_archive()).decode(), prompt="review")
+
+    output = await _run_review(request)
+
+    assert output == {"summary": "ok", "findings": []}
+    assert seen["_env_file"] is None
