@@ -33,7 +33,7 @@ class ReviewService:
     def __init__(self, session: AsyncSession, github: GitHubClient, runner: ReviewRunner) -> None:
         self.session, self.github, self.runner = session, github, runner
 
-    async def execute(self, job: ReviewJob) -> None:
+    async def execute(self, job: ReviewJob, execution_id: str | None = None) -> None:
         if not self.github.settings.github_account_allowed(job.repository_owner):
             raise ReviewSkipped("repository account is not allowed")
         config = await self.session.scalar(
@@ -54,7 +54,7 @@ class ReviewService:
         if not effective.enabled:
             raise ReviewSkipped("repository is disabled")
         patterns = list(effective.ignored_paths)
-        await self._execute_checkout(job, config, patterns, effective)
+        await self._execute_checkout(job, config, patterns, effective, execution_id)
 
     async def _execute_checkout(
         self,
@@ -62,6 +62,7 @@ class ReviewService:
         config: RepositorySettings,
         patterns: list[str],
         effective: EffectiveReviewSettings,
+        execution_id: str | None = None,
     ) -> int:
         token = await self.github.tokens.get(job.installation_id)
         manager = RepositoryCheckout(
@@ -97,7 +98,11 @@ class ReviewService:
                 manager.diff_text,
             )
             output = await self.runner.run(
-                checkout, prompt, effective.model, effective.codex_timeout_seconds
+                checkout,
+                prompt,
+                effective.model,
+                effective.codex_timeout_seconds,
+                execution_id,
             )
         existing = set(
             (

@@ -31,6 +31,7 @@ class ReviewRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_BYTES)
     model: str | None = Field(default=None, max_length=200)
     timeout: int | None = Field(default=None, ge=30, le=3600)
+    execution_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 def _extract_archive(encoded: str, destination: Path) -> None:
@@ -57,6 +58,7 @@ def _extract_archive(encoded: str, destination: Path) -> None:
 
 app = FastAPI(title="Codex executor")
 _execution_lock = asyncio.Lock()
+_seen_execution_ids: set[str] = set()
 
 
 @app.get("/health")
@@ -66,8 +68,19 @@ async def health() -> dict[str, str]:
 
 @app.post("/review", response_model=None)
 async def review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
+    if request.execution_id in _seen_execution_ids:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "EXECUTION_ALREADY_SEEN",
+                "retryable": False,
+                "stage": "dedupe",
+                "error": "execution already processed",
+            },
+        )
     if _execution_lock.locked():
         raise HTTPException(status_code=429, detail="executor busy")
+    _seen_execution_ids.add(request.execution_id)
     async with _execution_lock:
         return await _run_review(request)
 
@@ -114,6 +127,7 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
                 content={
                     "error_code": exc.code,
                     "retryable": exc.retryable,
+                    "matched_safe_signature": exc.signature,
                     "correlation_id": correlation_id,
                     "stage": "codex_exec",
                     "error": "codex execution failed",
@@ -130,6 +144,7 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
                 content={
                     "error_code": "EXECUTOR_INTERNAL",
                     "retryable": False,
+                    "matched_safe_signature": "internal",
                     "correlation_id": correlation_id,
                     "stage": "internal",
                     "error": "executor internal error",

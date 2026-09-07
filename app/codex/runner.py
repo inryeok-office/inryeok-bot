@@ -53,12 +53,18 @@ async def _stop_process_group(process: asyncio.subprocess.Process) -> None:
 
 class CodexError(RuntimeError):
     def __init__(
-        self, code: str, message: str, retryable: bool = False, retry_at: datetime | None = None
+        self,
+        code: str,
+        message: str,
+        retryable: bool = False,
+        retry_at: datetime | None = None,
+        signature: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.retry_at = retry_at
+        self.signature = signature or code
 
 
 def _error_text(stdout: bytes, stderr: bytes) -> str:
@@ -104,7 +110,11 @@ def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> Cod
         retry_at = _retry_at(text)
         suffix = f"; retry at {retry_at.isoformat()}" if retry_at else ""
         return CodexError(
-            "CODEX_RATE_LIMIT", "Codex request was rate limited" + suffix, retry_at=retry_at
+            "CODEX_RATE_LIMIT",
+            "Codex request was rate limited" + suffix,
+            retryable=True,
+            retry_at=retry_at,
+            signature="rate_limit",
         )
     if any(
         value in text
@@ -120,7 +130,10 @@ def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> Cod
         retry_at = _retry_at(text)
         suffix = f"; retry at {retry_at.isoformat()}" if retry_at else ""
         return CodexError(
-            "CODEX_QUOTA", "Codex usage limit was reached" + suffix, retry_at=retry_at
+            "CODEX_QUOTA",
+            "Codex usage limit was reached" + suffix,
+            retry_at=retry_at,
+            signature="quota",
         )
     if any(
         value in text
@@ -133,7 +146,27 @@ def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> Cod
             "invalid api key",
         )
     ):
-        return CodexError("CODEX_AUTH", "Codex CLI is not authenticated")
+        return CodexError(
+            "CODEX_AUTH", "Codex CLI is not authenticated", signature="authentication"
+        )
+    if any(value in text for value in ("permission denied", "operation not permitted")):
+        return CodexError(
+            "EXECUTOR_PERMISSION",
+            "Codex execution permission denied",
+            signature="permission_denied",
+        )
+    if any(value in text for value in ("unsupported option", "unknown option", "invalid config")):
+        return CodexError(
+            "CODEX_CONFIGURATION",
+            "Codex CLI configuration is unsupported",
+            signature="configuration",
+        )
+    if any(
+        value in text for value in ("not a git repository", "repository check", "fatal: not a git")
+    ):
+        return CodexError(
+            "CODEX_REPOSITORY", "Codex workspace repository check failed", signature="repository"
+        )
     if any(
         value in text
         for value in (
@@ -147,14 +180,24 @@ def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> Cod
         )
     ):
         return CodexError(
-            "CODEX_SERVICE_UNAVAILABLE", "Codex service is temporarily unavailable", True
+            "CODEX_SERVICE_UNAVAILABLE",
+            "Codex service is temporarily unavailable",
+            True,
+            signature="service_unavailable",
         )
-    return CodexError("CODEX_EXIT_NONZERO", "Codex CLI exited unsuccessfully", True)
+    return CodexError(
+        "CODEX_EXIT_NONZERO", "Codex CLI exited unsuccessfully", signature="unknown_nonzero"
+    )
 
 
 class ReviewRunner(Protocol):
     async def run(
-        self, checkout: Path, prompt: str, model: str | None = None, timeout: int | None = None
+        self,
+        checkout: Path,
+        prompt: str,
+        model: str | None = None,
+        timeout: int | None = None,
+        execution_id: str | None = None,
     ) -> ReviewOutput: ...
 
 
@@ -163,7 +206,12 @@ class FakeRunner:
         self.output = output
 
     async def run(
-        self, checkout: Path, prompt: str, model: str | None = None, timeout: int | None = None
+        self,
+        checkout: Path,
+        prompt: str,
+        model: str | None = None,
+        timeout: int | None = None,
+        execution_id: str | None = None,
     ) -> ReviewOutput:
         return self.output
 
@@ -176,7 +224,12 @@ class CodexRunner:
         self.schema_path = schema_path.resolve()
 
     async def run(
-        self, checkout: Path, prompt: str, model: str | None = None, timeout: int | None = None
+        self,
+        checkout: Path,
+        prompt: str,
+        model: str | None = None,
+        timeout: int | None = None,
+        execution_id: str | None = None,
     ) -> ReviewOutput:
         command = [
             self.settings.codex_command,

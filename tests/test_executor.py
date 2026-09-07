@@ -4,7 +4,7 @@ import tarfile
 
 import pytest
 
-from app.codex.executor import ReviewRequest, _extract_archive, _run_review
+from app.codex.executor import ReviewRequest, _extract_archive, _run_review, review
 from app.codex.executor_client import ExecutorRunner, _archive_workspace
 from app.codex.runner import CodexError
 from app.codex.schemas import ReviewOutput
@@ -132,9 +132,33 @@ async def test_executor_settings_do_not_read_dotenv(monkeypatch) -> None:
 
     monkeypatch.setattr("app.codex.executor.Settings", SettingsStub)
     monkeypatch.setattr("app.codex.executor.CodexRunner", RunnerStub)
-    request = ReviewRequest(archive=base64.b64encode(_archive()).decode(), prompt="review")
+    request = ReviewRequest(
+        archive=base64.b64encode(_archive()).decode(),
+        prompt="review",
+        execution_id="execution-123456",
+    )
 
     output = await _run_review(request)
 
     assert output == {"summary": "ok", "findings": []}
     assert seen["_env_file"] is None
+
+
+@pytest.mark.asyncio
+async def test_executor_rejects_duplicate_execution_id(monkeypatch) -> None:
+    monkeypatch.setattr("app.codex.executor._seen_execution_ids", set())
+    request = ReviewRequest(
+        archive=base64.b64encode(_archive()).decode(),
+        prompt="review",
+        execution_id="duplicate-execution-123",
+    )
+
+    async def fake_run(_: ReviewRequest) -> dict[str, object]:
+        return {"summary": "ok", "findings": []}
+
+    monkeypatch.setattr("app.codex.executor._run_review", fake_run)
+    first = await review(request)
+    second = await review(request)
+
+    assert first == {"summary": "ok", "findings": []}
+    assert second.status_code == 409

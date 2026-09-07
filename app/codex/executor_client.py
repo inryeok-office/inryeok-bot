@@ -45,7 +45,12 @@ class ExecutorRunner(ReviewRunner):
         self.timeout = timeout
 
     async def run(
-        self, checkout: Path, prompt: str, model: str | None = None, timeout: int | None = None
+        self,
+        checkout: Path,
+        prompt: str,
+        model: str | None = None,
+        timeout: int | None = None,
+        execution_id: str | None = None,
     ) -> ReviewOutput:
         archive = _archive_workspace(checkout)
         payload = {
@@ -53,6 +58,7 @@ class ExecutorRunner(ReviewRunner):
             "prompt": prompt,
             "model": model,
             "timeout": timeout,
+            "execution_id": execution_id,
         }
         request_timeout = max(self.timeout, float(timeout or 0) + 30.0)
         try:
@@ -71,10 +77,13 @@ class ExecutorRunner(ReviewRunner):
                 async with httpx.AsyncClient(timeout=request_timeout) as client:
                     response = await client.post(f"{self.url}/review", json=payload)
         except httpx.TimeoutException as exc:
-            raise CodexError("CODEX_TIMEOUT", "Codex executor timed out", retryable=True) from exc
+            raise CodexError("CODEX_TIMEOUT", "Codex executor timed out") from exc
         except httpx.HTTPError as exc:
-            raise CodexError("EXECUTOR_UNAVAILABLE", "Codex executor is unavailable", True) from exc
+            raise CodexError(
+                "EXECUTOR_UNKNOWN_OUTCOME", "Codex executor result is unknown"
+            ) from exc
         if response.status_code >= 400:
+            body: dict[str, object] = {}
             try:
                 body = response.json()
                 error = str(body.get("error_code", "EXECUTOR_INTERNAL"))
@@ -82,7 +91,12 @@ class ExecutorRunner(ReviewRunner):
             except ValueError:
                 error = "EXECUTOR_FAILED"
                 retryable = False
-            raise CodexError(error, "Codex executor rejected the review", retryable=retryable)
+            raise CodexError(
+                error,
+                "Codex executor rejected the review",
+                retryable=retryable,
+                signature=str(body.get("matched_safe_signature", error)),
+            )
         try:
             return ReviewOutput.model_validate(response.json())
         except (ValueError, TypeError) as exc:

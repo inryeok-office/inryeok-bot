@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 from datetime import UTC, datetime
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -130,7 +131,7 @@ async def run_worker() -> None:
                 runner = ExecutorRunner(
                     settings.codex_executor_url, settings.review_timeout_seconds + 60
                 )
-                await ReviewService(session, github, runner).execute(job)
+                await ReviewService(session, github, runner).execute(job, uuid4().hex)
                 await repository.finish(job, JobStatus.SUCCEEDED)
             except ReviewSkipped as exc:
                 await finish_after_error(
