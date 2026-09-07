@@ -215,7 +215,9 @@ def _fixture(root: Path) -> Path:
     return repo
 
 
-async def _one_codex_call(repo: Path, execution_id: str) -> dict[str, Any]:
+async def _one_codex_call(
+    repo: Path, execution_id: str = "diagnostic-test-execution"
+) -> dict[str, Any]:
     try:
         output = await ExecutorRunner("unix:///run/inryeok-bot/executor.sock", 120).run(
             repo,
