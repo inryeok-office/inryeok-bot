@@ -118,11 +118,13 @@ def _static_checks() -> list[dict[str, Any]]:
     for name, argv in (
         ("codex_start", [CODEX, "--version"]),
         ("codex_options", [CODEX, "exec", "--help"]),
-        ("sandbox_options", [CODEX, "sandbox", "linux", "--help"]),
+        ("sandbox_cli_options", [CODEX, "sandbox", "--help"]),
         ("authentication", [CODEX, "login", "status"]),
     ):
         ok, details = _command_status(argv)
         checks.append(_stage(name, ok, **details))
+    ok, details = _command_status([CODEX, "sandbox", "linux", "--help"], classify=True)
+    checks.append(_stage("sandbox_start", ok, **details))
     try:
         with MANAGED_CONFIG.open("rb") as stream:
             tomllib.load(stream)
@@ -137,9 +139,17 @@ def _static_checks() -> list[dict[str, Any]]:
     return checks
 
 
-def _command_status(argv: list[str]) -> tuple[bool, dict[str, Any]]:
+def _command_status(argv: list[str], *, classify: bool = False) -> tuple[bool, dict[str, Any]]:
     code, stdout, stderr = _as_executor(argv, cwd=APP_ROOT)
-    return code == 0, {"exit_code": code, "stdout_bytes": len(stdout), "stderr_bytes": len(stderr)}
+    details: dict[str, Any] = {
+        "exit_code": code,
+        "stdout_bytes": len(stdout),
+        "stderr_bytes": len(stderr),
+    }
+    if classify and code:
+        error = classify_codex_failure(code, stdout, stderr)
+        details.update({"error_code": error.code, "matched_safe_signature": error.signature})
+    return code == 0, details
 
 
 def _unit_has_expected_paths() -> bool:
