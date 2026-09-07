@@ -79,11 +79,22 @@ class ExecutorRunner(ReviewRunner):
                 async with httpx.AsyncClient(timeout=request_timeout) as client:
                     response = await client.post(f"{self.url}/review", json=payload)
         except httpx.TimeoutException as exc:
-            raise CodexError("CODEX_TIMEOUT", "Codex executor timed out") from exc
+            error = CodexError(
+                "CODEX_TIMEOUT", "Codex executor timed out", signature="transport_timeout"
+            )
+            error.stage = "executor_transport"
+            raise error from exc
         except httpx.HTTPError as exc:
-            raise CodexError(
-                "EXECUTOR_UNKNOWN_OUTCOME", "Codex executor result is unknown"
-            ) from exc
+            # A disconnected Unix-socket response has an unknowable outcome;
+            # never retry the same execution automatically.  Keep only a
+            # fixed signature and stage, not exception text or request data.
+            error = CodexError(
+                "EXECUTOR_UNKNOWN_OUTCOME",
+                "Codex executor result is unknown",
+                signature="unix_socket_disconnected",
+            )
+            error.stage = "executor_transport"
+            raise error from exc
         if response.status_code >= 400:
             body: dict[str, object] = {}
             try:

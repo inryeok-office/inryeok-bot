@@ -2,6 +2,7 @@ import base64
 import io
 import tarfile
 
+import httpx
 import pytest
 
 from app.codex.executor import (
@@ -28,6 +29,9 @@ async def test_executor_runner_supports_unix_socket(monkeypatch, tmp_path) -> No
             return {"summary": "ok", "findings": []}
 
     class Client:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
         def __init__(self, **kwargs: object) -> None:
             seen.update(kwargs)
 
@@ -84,6 +88,28 @@ async def test_executor_runner_preserves_safe_error_category(monkeypatch, tmp_pa
     assert raised.value.code == "CODEX_SERVICE_UNAVAILABLE"
     assert raised.value.retryable
     assert "opaque-id" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_executor_transport_disconnect_is_safe_unknown_outcome(monkeypatch, tmp_path) -> None:
+    class Client:
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, path: str, **kwargs: object) -> object:
+            raise httpx.RemoteProtocolError("redacted transport detail")
+
+    monkeypatch.setattr("app.codex.executor_client.httpx.AsyncClient", Client)
+    with pytest.raises(CodexError) as raised:
+        await ExecutorRunner("unix:///run/inryeok-bot/executor.sock").run(tmp_path, "review")
+    assert raised.value.code == "EXECUTOR_UNKNOWN_OUTCOME"
+    assert raised.value.signature == "unix_socket_disconnected"
+    assert raised.value.stage == "executor_transport"
+    assert not raised.value.retryable
+    assert "redacted transport detail" not in str(raised.value)
 
 
 def _archive(name: str = "file.txt", content: bytes = b"ok") -> str:
