@@ -8,15 +8,13 @@ remain represented.
 
 from app.codex.schemas import Category, Finding, Severity
 from app.review.diff import ChangedFile
-from app.review.evaluation import _groups, _expected_status
+from app.review.evaluation import _expected_status, _groups
 from app.review.validator import validate_findings_with_diagnostics
 
 
 def test_fixture_corpus_covers_noncritical_review_conditions() -> None:
     source = "\n".join(
-        contents
-        for group in _groups()
-        for contents in group.changed_files.values()
+        contents for group in _groups() for contents in group.changed_files.values()
     ).casefold()
     required_signals = (
         "none",  # nullable and boundary handling
@@ -98,4 +96,3 @@ def test_broader_policy_keeps_evidence_and_line_gates() -> None:
     assert [item.line for item in result.findings] == [2]
     assert result.changed_file_count == 2
     assert result.changed_line_count == 1
-

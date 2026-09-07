@@ -240,9 +240,8 @@ async def test_existing_review_marker_recovers_without_reposting(app_client, mon
         session.add(job)
         await session.commit()
         github = FakeGitHub()
-        from app.review.publisher import review_marker
-
         from app.review.domains import PROMPT_VERSION
+        from app.review.publisher import review_marker
 
         marker = review_marker("acme", "repo", 12, "b" * 40, PROMPT_VERSION)
         github.reviews = [{"id": 9_000_000_001, "body": f"<!-- inryeok-review:{marker} -->"}]
