@@ -121,6 +121,34 @@ async def resume() -> None:
         print(json.dumps({"processing_paused": False}))
 
 
+async def activate_repositories(names: list[str]) -> None:
+    """Enable only explicitly named repositories and audit the change."""
+    requested = {name.casefold() for name in names}
+    async with get_session_factory()() as session:
+        rows = list(await session.scalars(select(RepositorySettings)))
+        changed: list[str] = []
+        for repository in rows:
+            key = f"{repository.repository_owner}/{repository.repository_name}".casefold()
+            if key in requested:
+                repository.enabled = True
+                repository.auto_review = True
+                changed.append(key)
+        missing = sorted(requested - set(changed))
+        if missing:
+            raise ValueError(f"repositories are not registered: {', '.join(missing)}")
+        session.add(
+            AdminAuditLog(
+                actor_login="operations",
+                action="REPOSITORY_POLICY",
+                target_type="repositories",
+                target_id=",".join(sorted(changed)),
+                summary="enabled explicit repositories; automatic review enabled",
+            )
+        )
+        await session.commit()
+        print(json.dumps({"enabled": sorted(changed), "automatic_review": True}))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -129,11 +157,15 @@ def main() -> None:
     policy = sub.add_parser("pause-test")
     policy.add_argument("owner")
     policy.add_argument("name")
+    activate = sub.add_parser("activate-repositories")
+    activate.add_argument("repositories", nargs="+", metavar="OWNER/REPOSITORY")
     args = parser.parse_args()
     if args.command == "audit":
         asyncio.run(audit())
     elif args.command == "pause-test":
         asyncio.run(set_policy(args.owner, args.name))
+    elif args.command == "activate-repositories":
+        asyncio.run(activate_repositories(args.repositories))
     else:
         asyncio.run(resume())
 
