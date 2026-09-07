@@ -46,6 +46,40 @@ async def test_executor_runner_supports_unix_socket(monkeypatch, tmp_path) -> No
     assert seen["transport"] == {"uds": "/run/inryeok-bot/executor.sock"}
 
 
+@pytest.mark.asyncio
+async def test_executor_runner_preserves_safe_error_category(monkeypatch, tmp_path) -> None:
+    class Response:
+        status_code = 503
+
+        def json(self) -> dict[str, object]:
+            return {
+                "error_code": "CODEX_SERVICE_UNAVAILABLE",
+                "retryable": True,
+                "correlation_id": "opaque-id",
+                "error": "codex execution failed",
+            }
+
+    class Client:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, path: str, **kwargs: object) -> Response:
+            return Response()
+
+    monkeypatch.setattr("app.codex.executor_client.httpx.AsyncClient", Client)
+    with pytest.raises(CodexError) as raised:
+        await ExecutorRunner("http://executor").run(tmp_path, "review")
+    assert raised.value.code == "CODEX_SERVICE_UNAVAILABLE"
+    assert raised.value.retryable
+    assert "opaque-id" not in str(raised.value)
+
+
 def _archive(name: str = "file.txt", content: bytes = b"ok") -> str:
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as archive:

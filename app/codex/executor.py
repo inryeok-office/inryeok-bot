@@ -4,10 +4,12 @@ import asyncio
 import base64
 import binascii
 import io
+import logging
 import os
 import shutil
 import tarfile
 import tempfile
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -16,6 +18,8 @@ from pydantic import BaseModel, Field
 
 from app.codex.runner import CodexError, CodexRunner
 from app.config import Settings
+
+logger = logging.getLogger(__name__)
 
 MAX_ARCHIVE_BYTES = 25_000_000
 MAX_ARCHIVE_FILES = 20_000
@@ -69,6 +73,7 @@ async def review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
 
 
 async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
+    correlation_id = uuid.uuid4().hex
     command = os.environ.get("CODEX_COMMAND", "codex")
     home = Path(os.environ.get("CODEX_HOME", "/var/lib/codex"))
     settings = Settings(
@@ -91,9 +96,44 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
                 workspace, request.prompt, request.model, request.timeout
             )
         except CodexError as exc:
+            status_code = {
+                "CODEX_AUTH": 401,
+                "CODEX_QUOTA": 429,
+                "CODEX_RATE_LIMIT": 429,
+                "CODEX_TIMEOUT": 504,
+                "CODEX_SERVICE_UNAVAILABLE": 503,
+            }.get(exc.code, 500)
+            logger.warning(
+                "executor review failed correlation=%s category=%s retryable=%s stage=codex_exec",
+                correlation_id,
+                exc.code,
+                exc.retryable,
+            )
             return JSONResponse(
-                status_code=502,
-                content={"error_code": exc.code, "error": "codex execution failed"},
+                status_code=status_code,
+                content={
+                    "error_code": exc.code,
+                    "retryable": exc.retryable,
+                    "correlation_id": correlation_id,
+                    "stage": "codex_exec",
+                    "error": "codex execution failed",
+                },
+            )
+        except Exception:
+            logger.warning(
+                "executor review failed correlation=%s "
+                "category=EXECUTOR_INTERNAL retryable=false stage=internal",
+                correlation_id,
+            )
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error_code": "EXECUTOR_INTERNAL",
+                    "retryable": False,
+                    "correlation_id": correlation_id,
+                    "stage": "internal",
+                    "error": "executor internal error",
+                },
             )
         return output.model_dump(mode="json")
     finally:

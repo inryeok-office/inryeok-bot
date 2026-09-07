@@ -212,7 +212,7 @@ async def test_eyes_reaction_is_added_once_per_bot() -> None:
         ("HTTP 429 too many requests", "CODEX_RATE_LIMIT"),
         ("login required", "CODEX_AUTH"),
         ("service unavailable", "CODEX_SERVICE_UNAVAILABLE"),
-        ("unexpected failure", "CODEX_FAILED"),
+        ("unexpected failure", "CODEX_EXIT_NONZERO"),
     ],
 )
 def test_codex_failure_classification(message: str, expected: str) -> None:

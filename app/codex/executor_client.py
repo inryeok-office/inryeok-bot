@@ -76,10 +76,13 @@ class ExecutorRunner(ReviewRunner):
             raise CodexError("EXECUTOR_UNAVAILABLE", "Codex executor is unavailable", True) from exc
         if response.status_code >= 400:
             try:
-                error = response.json().get("error_code", "EXECUTOR_FAILED")
+                body = response.json()
+                error = str(body.get("error_code", "EXECUTOR_INTERNAL"))
+                retryable = bool(body.get("retryable", False))
             except ValueError:
                 error = "EXECUTOR_FAILED"
-            raise CodexError(str(error), "Codex executor rejected the review", retryable=True)
+                retryable = False
+            raise CodexError(error, "Codex executor rejected the review", retryable=retryable)
         try:
             return ReviewOutput.model_validate(response.json())
         except (ValueError, TypeError) as exc:

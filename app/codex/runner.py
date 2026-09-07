@@ -149,7 +149,7 @@ def classify_codex_failure(returncode: int, stdout: bytes, stderr: bytes) -> Cod
         return CodexError(
             "CODEX_SERVICE_UNAVAILABLE", "Codex service is temporarily unavailable", True
         )
-    return CodexError("CODEX_FAILED", f"Codex CLI exited unsuccessfully ({returncode})", True)
+    return CodexError("CODEX_EXIT_NONZERO", "Codex CLI exited unsuccessfully", True)
 
 
 class ReviewRunner(Protocol):
