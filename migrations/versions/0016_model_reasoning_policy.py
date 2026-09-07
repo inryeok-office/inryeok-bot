@@ -12,9 +12,13 @@ depends_on = None
 def upgrade() -> None:
     op.add_column(
         "global_review_settings",
-        sa.Column("reasoning_effort", sa.String(length=16), server_default="medium", nullable=False),
+        sa.Column(
+            "reasoning_effort", sa.String(length=16), server_default="medium", nullable=False
+        ),
     )
-    op.add_column("repository_settings", sa.Column("override_reasoning_effort", sa.String(length=16)))
+    op.add_column(
+        "repository_settings", sa.Column("override_reasoning_effort", sa.String(length=16))
+    )
     op.add_column("review_jobs", sa.Column("model", sa.String(length=128)))
     op.add_column("review_jobs", sa.Column("reasoning_effort", sa.String(length=16)))
 

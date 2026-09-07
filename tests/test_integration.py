@@ -145,7 +145,7 @@ async def test_internal_failure_does_not_create_check_run(app_client, monkeypatc
     monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
 
     class BrokenRunner:
-        async def run(self, *_: object) -> ReviewOutput:
+        async def run(self, *_: object, **__: object) -> ReviewOutput:
             raise RuntimeError("sensitive internal detail")
 
     async with factory() as session:
