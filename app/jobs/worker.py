@@ -141,6 +141,7 @@ async def run_worker() -> None:
                 assert github is not None
                 attempts = job.attempts
                 await session.rollback()
+                job.codex_exit_code = exc.exit_code
                 if exc.retryable and attempts < settings.worker_max_attempts:
                     job.status = JobStatus.PENDING
                     job.started_at = None

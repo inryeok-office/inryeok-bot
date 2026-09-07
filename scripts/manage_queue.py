@@ -22,7 +22,7 @@ async def audit() -> None:
     async with get_session_factory()() as session:
         rows = await session.scalars(
             select(ReviewJob)
-            .where(ReviewJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]))
+            .where(ReviewJob.status != JobStatus.SUCCEEDED)
             .order_by(ReviewJob.created_at, ReviewJob.id)
         )
         jobs = []
@@ -40,6 +40,7 @@ async def audit() -> None:
                     "started_at": job.started_at.isoformat() if job.started_at else None,
                     "head_sha": job.head_sha[:8],
                     "error_code": job.error_code,
+                    "codex_exit_code": job.codex_exit_code,
                     "execution_id": None,
                 }
             )
