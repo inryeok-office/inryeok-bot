@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, and_, func, or_, select, update
+from sqlalchemy import Select, exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,33 +21,31 @@ class QueueCapacityError(RuntimeError):
 def claim_statement() -> Select[tuple[ReviewJob]]:
     return (
         select(ReviewJob)
-        # Evaluate the pause switch in the same statement as the row claim.  The
-        # previous two-step read allowed a worker to pass the pause check just
-        # before an administrator paused the queue.
-        .outerjoin(GlobalReviewSettings, GlobalReviewSettings.id == 1)
-        # A repository row may not exist for legacy jobs; those remain claimable
-        # so a settings backfill cannot strand existing work.  Once a row exists,
-        # installation and enabled state are authoritative.
-        .outerjoin(
-            RepositorySettings,
-            and_(
-                RepositorySettings.installation_id == ReviewJob.installation_id,
-                RepositorySettings.repository_owner == ReviewJob.repository_owner,
-                RepositorySettings.repository_name == ReviewJob.repository_name,
-            ),
-        )
         .where(
             ReviewJob.status == JobStatus.PENDING,
             (ReviewJob.not_before.is_(None) | (ReviewJob.not_before <= datetime.now(UTC))),
-            or_(
-                GlobalReviewSettings.id.is_(None),
-                GlobalReviewSettings.processing_paused.is_(False),
+            ~exists(
+                select(GlobalReviewSettings.id).where(
+                    GlobalReviewSettings.id == 1,
+                    GlobalReviewSettings.processing_paused.is_(True),
+                )
             ),
             or_(
-                RepositorySettings.id.is_(None),
-                and_(
-                    RepositorySettings.enabled.is_(True),
-                    RepositorySettings.installed.is_(True),
+                ~exists(
+                    select(RepositorySettings.id).where(
+                        RepositorySettings.installation_id == ReviewJob.installation_id,
+                        RepositorySettings.repository_owner == ReviewJob.repository_owner,
+                        RepositorySettings.repository_name == ReviewJob.repository_name,
+                    )
+                ),
+                exists(
+                    select(RepositorySettings.id).where(
+                        RepositorySettings.installation_id == ReviewJob.installation_id,
+                        RepositorySettings.repository_owner == ReviewJob.repository_owner,
+                        RepositorySettings.repository_name == ReviewJob.repository_name,
+                        RepositorySettings.enabled.is_(True),
+                        RepositorySettings.installed.is_(True),
+                    )
                 ),
             ),
         )
