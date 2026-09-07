@@ -20,7 +20,8 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from app.codex.runner import MAX_PROCESS_OUTPUT, classify_codex_failure
+from app.codex.executor_client import ExecutorRunner
+from app.codex.runner import CodexError, classify_codex_failure
 
 _pwd: Any = None
 try:
@@ -123,12 +124,9 @@ def _static_checks() -> list[dict[str, Any]]:
     ):
         ok, details = _command_status(argv)
         checks.append(_stage(name, ok, **details))
-    ok, details = _command_status([CODEX, "sandbox", "linux", "--help"], classify=True)
-    if not ok:
-        details.update(
-            {"error_code": "SANDBOX_START_ERROR", "matched_safe_signature": "sandbox_start"}
-        )
-    checks.append(_stage("sandbox_start", ok, **details))
+    for command in ("/usr/bin/true", "/usr/bin/id"):
+        ok, details = _sandbox_status(command)
+        checks.append(_stage("sandbox_command", ok, command=command, **details))
     try:
         with MANAGED_CONFIG.open("rb") as stream:
             tomllib.load(stream)
@@ -153,6 +151,27 @@ def _command_status(argv: list[str], *, classify: bool = False) -> tuple[bool, d
     if classify and code:
         error = classify_codex_failure(code, stdout, stderr)
         details.update({"error_code": error.code, "matched_safe_signature": error.signature})
+    return code == 0, details
+
+
+def _sandbox_status(command: str) -> tuple[bool, dict[str, Any]]:
+    code, stdout, stderr = _as_executor([CODEX, "sandbox", "--", command], cwd=APP_ROOT)
+    details: dict[str, Any] = {
+        "exit_code": code,
+        "stdout_bytes": len(stdout),
+        "stderr_bytes": len(stderr),
+    }
+    if code:
+        error = classify_codex_failure(code, stdout, stderr)
+        joined = (stdout + stderr).lower()
+        if any(marker in joined for marker in (b"execvp", b"no such file")):
+            details.update(
+                {"error_code": "DIAGNOSTIC_COMMAND_ERROR", "matched_safe_signature": "execvp"}
+            )
+        else:
+            details.update(
+                {"error_code": "SANDBOX_START_ERROR", "matched_safe_signature": error.signature}
+            )
     return code == 0, details
 
 
@@ -190,61 +209,28 @@ def _fixture(root: Path) -> Path:
 
 
 async def _one_codex_call(repo: Path) -> dict[str, Any]:
-    command = [
-        CODEX,
-        "exec",
-        "--ephemeral",
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--ask-for-approval",
-        "never",
-        "--config",
-        'default_permissions="inryeok_review_read_only"',
-        "--color",
-        "never",
-        "--output-schema",
-        str(SCHEMA),
-        "-",
-    ]
-    env = _executor_env()
-    if os.name != "nt" and _uid() == 0:
-        command = ["runuser", "--user", EXECUTOR_USER, "--", "env", "-i", *_env_args(), *command]
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        cwd=repo,
-        env=None if command[0] == "runuser" else env,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate(
-        b"Review this small fixture and return structured output."
-    )
-    stdout = stdout[:MAX_PROCESS_OUTPUT]
-    stderr = stderr[:MAX_PROCESS_OUTPUT]
-    if process.returncode:
-        error = classify_codex_failure(process.returncode, stdout, stderr)
+    try:
+        output = await ExecutorRunner("unix:///run/inryeok-bot/executor.sock", 120).run(
+            repo,
+            "Review this small fixture and return structured output.",
+            timeout=60,
+            execution_id="diagnostic-one-shot-000001",
+        )
+    except CodexError as error:
         return {
             "stage": "codex_exec",
             "ok": False,
-            "exit_code": process.returncode,
+            "exit_code": None,
             "error_code": error.code,
             "retryable": error.retryable,
             "matched_safe_signature": error.signature,
-            "stdout_bytes": len(stdout),
-            "stderr_bytes": len(stderr),
         }
-    try:
-        payload = json.loads(stdout)
-        ok = isinstance(payload, dict)
-    except json.JSONDecodeError:
-        ok = False
     return {
         "stage": "structured_output",
-        "ok": ok,
+        "ok": True,
         "exit_code": 0,
-        "stdout_bytes": len(stdout),
-        "stderr_bytes": len(stderr),
+        "schema": "validated",
+        "finding_count": len(output.findings),
     }
 
 
