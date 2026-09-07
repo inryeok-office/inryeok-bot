@@ -10,7 +10,13 @@ from sqlalchemy.exc import IntegrityError
 from app.codex.runner import CodexError
 from app.config import Settings
 from app.github.auth import InstallationTokenProvider
-from app.jobs.models import JobStatus, ReviewFailureNotice, ReviewJob, TriggerType
+from app.jobs.models import (
+    GlobalReviewSettings,
+    JobStatus,
+    ReviewFailureNotice,
+    ReviewJob,
+    TriggerType,
+)
 from app.jobs.repository import JobRepository, claim_statement
 from app.jobs.worker import (
     FAILURE_MESSAGES,
@@ -82,6 +88,27 @@ async def test_claim_skips_scheduled_job_until_not_before(app_client) -> None:
                 head_sha="b" * 40,
                 trigger_type=TriggerType.AUTO,
                 not_before=datetime.now(UTC) + timedelta(minutes=5),
+            )
+        )
+        await session.commit()
+        assert await JobRepository(session).claim_next() is None
+
+
+@pytest.mark.asyncio
+async def test_claim_is_paused_by_global_processing_flag(app_client) -> None:
+    _, factory = app_client
+    async with factory() as session:
+        session.add(GlobalReviewSettings(id=1, processing_paused=True))
+        session.add(
+            ReviewJob(
+                delivery_id="paused",
+                installation_id=1,
+                repository_owner="o",
+                repository_name="r",
+                pull_request_number=1,
+                base_sha="a" * 40,
+                head_sha="b" * 40,
+                trigger_type=TriggerType.COMMAND,
             )
         )
         await session.commit()
