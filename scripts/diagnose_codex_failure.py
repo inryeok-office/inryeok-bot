@@ -193,6 +193,9 @@ def _unit_has_expected_paths() -> bool:
 def _fixture(root: Path) -> Path:
     repo = root / "fixture"
     repo.mkdir()
+    if os.name != "nt" and _uid() == 0 and _pwd is not None:
+        account = _pwd.getpwnam(EXECUTOR_USER)
+        os.chown(repo, account.pw_uid, account.pw_gid)  # type: ignore[attr-defined]
     (repo / "sample.py").write_text(
         "def add(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8"
     )
