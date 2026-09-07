@@ -138,8 +138,9 @@ async def run_worker() -> None:
                 )
             except CodexError as exc:
                 assert github is not None
+                attempts = job.attempts
                 await session.rollback()
-                if exc.retryable and job.attempts < settings.worker_max_attempts:
+                if exc.retryable and attempts < settings.worker_max_attempts:
                     job.status = JobStatus.PENDING
                     job.started_at = None
                     job.error_code = exc.code
@@ -152,9 +153,10 @@ async def run_worker() -> None:
                     )
             except (httpx.TimeoutException, httpx.NetworkError, DiffError, GitHubAPIError) as exc:
                 assert github is not None
+                attempts = job.attempts
                 await session.rollback()
                 retryable = not isinstance(exc, GitHubAPIError) or exc.retryable
-                if retryable and job.attempts < settings.worker_max_attempts:
+                if retryable and attempts < settings.worker_max_attempts:
                     job.status = JobStatus.PENDING
                     job.started_at = None
                     job.error_code = "TRANSIENT"
