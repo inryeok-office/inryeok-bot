@@ -100,18 +100,42 @@ async def set_policy(test_owner: str, test_name: str) -> None:
         )
 
 
+async def resume() -> None:
+    """Resume claiming after an explicitly audited pause window."""
+    async with get_session_factory()() as session:
+        global_settings = await session.get(GlobalReviewSettings, 1)
+        if global_settings is None:
+            global_settings = GlobalReviewSettings(id=1)
+            session.add(global_settings)
+        global_settings.processing_paused = False
+        session.add(
+            AdminAuditLog(
+                actor_login="operations",
+                action="QUEUE_POLICY",
+                target_type="global_settings",
+                target_id="1",
+                summary="processing_paused=false; manual resume",
+            )
+        )
+        await session.commit()
+        print(json.dumps({"processing_paused": False}))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("audit")
+    sub.add_parser("resume")
     policy = sub.add_parser("pause-test")
     policy.add_argument("owner")
     policy.add_argument("name")
     args = parser.parse_args()
     if args.command == "audit":
         asyncio.run(audit())
-    else:
+    elif args.command == "pause-test":
         asyncio.run(set_policy(args.owner, args.name))
+    else:
+        asyncio.run(resume())
 
 
 if __name__ == "__main__":
