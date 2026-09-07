@@ -57,7 +57,10 @@ services:
         limits: {cpus: "1.0", memory: 2G}
 
   postgres:
-    image: postgres:17.7-bookworm@sha256:86e0b703649d7a792bd9243ee28afc9d8f7c6b2b5638077c9d6882d4d472bbfd
+    image: inryeok-postgres:17.7-gosu1.19
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
     environment:
       POSTGRES_DB: reviewbot
       POSTGRES_USER: reviewbot

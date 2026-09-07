@@ -12,21 +12,29 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column("review_jobs", sa.Column("not_before", sa.DateTime(timezone=True), nullable=True))
+    op.add_column(
+        "review_jobs", sa.Column("not_before", sa.DateTime(timezone=True), nullable=True)
+    )
     op.create_index("ix_review_jobs_not_before", "review_jobs", ["not_before"])
     op.add_column(
         "global_review_settings",
-        sa.Column("synchronize_debounce_seconds", sa.Integer(), server_default="60", nullable=False),
+        sa.Column(
+            "synchronize_debounce_seconds", sa.Integer(), server_default="60", nullable=False
+        ),
     )
     op.add_column(
         "global_review_settings",
-        sa.Column("command_cooldown_seconds", sa.Integer(), server_default="60", nullable=False),
+        sa.Column(
+            "command_cooldown_seconds", sa.Integer(), server_default="60", nullable=False
+        ),
     )
     op.add_column(
-        "repository_settings", sa.Column("override_synchronize_debounce_seconds", sa.Integer())
+        "repository_settings",
+        sa.Column("override_synchronize_debounce_seconds", sa.Integer()),
     )
     op.add_column(
-        "repository_settings", sa.Column("override_command_cooldown_seconds", sa.Integer())
+        "repository_settings",
+        sa.Column("override_command_cooldown_seconds", sa.Integer()),
     )
     op.execute("UPDATE global_review_settings SET review_on_synchronize = false")
 
