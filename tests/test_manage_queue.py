@@ -10,7 +10,9 @@ from scripts import manage_queue
 
 
 @pytest.mark.asyncio
-async def test_pause_test_does_not_rewrite_repository_policy(app_client, monkeypatch, capsys) -> None:
+async def test_pause_test_does_not_rewrite_repository_policy(
+    app_client, monkeypatch, capsys
+) -> None:
     """The legacy test pause command must not reset production repository rows."""
     _, factory = app_client
     async with factory() as session:
