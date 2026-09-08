@@ -62,20 +62,25 @@ async def audit() -> None:
 
 
 async def set_policy(test_owner: str, test_name: str) -> None:
+    """Pause processing without mutating repository policy.
+
+    The old implementation used this maintenance command as a test allowlist
+    and rewrote every repository's materialized ``enabled``/``auto_review``
+    flags.  That silently erased the effective policy for repositories that
+    inherited the global default and was the source of recurring resets after
+    maintenance windows.  Queue pause and repository policy are independent;
+    test isolation must be enforced by an explicit, temporary deployment
+    environment rather than changing production rows.
+
+    Keep the positional arguments for CLI compatibility, but record that they
+    are informational only.  No repository rows are loaded or changed.
+    """
     async with get_session_factory()() as session:
         global_settings = await session.get(GlobalReviewSettings, 1)
         if global_settings is None:
             global_settings = GlobalReviewSettings(id=1)
             session.add(global_settings)
         global_settings.processing_paused = True
-        repos = list(await session.scalars(select(RepositorySettings)))
-        for repository in repos:
-            allowed = (
-                repository.repository_owner.casefold() == test_owner.casefold()
-                and repository.repository_name.casefold() == test_name.casefold()
-            )
-            repository.enabled = allowed
-            repository.auto_review = False
         session.add(
             AdminAuditLog(
                 actor_login="operations",
@@ -83,8 +88,8 @@ async def set_policy(test_owner: str, test_name: str) -> None:
                 target_type="global_settings",
                 target_id="1",
                 summary=(
-                    f"processing_paused=true; only {test_owner}/{test_name} enabled; "
-                    "automatic review disabled"
+                    f"processing_paused=true; repository policy unchanged; "
+                    f"legacy test target {test_owner}/{test_name} is informational"
                 ),
             )
         )
@@ -94,7 +99,7 @@ async def set_policy(test_owner: str, test_name: str) -> None:
                 {
                     "processing_paused": True,
                     "test_repository": f"{test_owner}/{test_name}",
-                    "automatic_review": False,
+                    "repository_policy_changed": False,
                 }
             )
         )
