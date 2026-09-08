@@ -62,3 +62,16 @@ dl.details { display: grid; grid-template-columns: minmax(140px, 190px) 1fr; gap
 @media (max-width: 1050px) { .shell { grid-template-columns: 210px minmax(0, 1fr); } .content { padding-left: 20px; padding-right: 20px; } .grid.stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .preset-grid { grid-template-columns: 1fr; } .preset.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .shell { display: block; } .sidebar { padding: 12px 14px; gap: 12px; } .brand { padding-left: 4px; } .nav { display: flex; overflow-x: auto; gap: 3px; } .nav a { white-space: nowrap; padding: 8px 9px; } .nav a[aria-current="page"] { box-shadow: inset 0 -3px #f3b51b; } .sidebar-footer { display: none; } .topbar { padding: 0 16px; } .topbar-meta { display: none; } .content { padding: 18px 14px 34px; } .page-head { flex-direction: column; gap: 10px; } .page-head h1 { font-size: 22px; } .grid.two, .fields, .check-grid, .preset.compact { grid-template-columns: 1fr; } .form-actions { flex-direction: column-reverse; } .form-actions button, .form-actions .button { width: 100%; } dl.details { grid-template-columns: 1fr; } dl.details dt { border-bottom: 0; padding-bottom: 1px; } dl.details dd { padding-top: 0; } .table-wrap table { min-width: 680px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+
+/* Dense admin tables remain usable on laptop screens without hiding policy
+   state.  Long identifiers wrap only in their secondary line; actions stay
+   reachable and status text remains visible alongside color. */
+.setting-value { display: block; font-weight: 650; }
+.table-wrap td:first-child { min-width: 190px; }
+.table-wrap td:last-child { white-space: nowrap; }
+.repo-name { overflow-wrap: anywhere; }
+@media (min-width: 761px) and (max-width: 1180px) {
+  .content { padding-left: 18px; padding-right: 18px; }
+  .table-wrap th, .table-wrap td { padding: 8px 9px; }
+  .table-wrap .repo-meta { max-width: 180px; }
+}

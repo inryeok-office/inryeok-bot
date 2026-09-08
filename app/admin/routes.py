@@ -253,10 +253,23 @@ async def repositories(
             query.order_by(RepositorySettings.repository_owner, RepositorySettings.repository_name)
         )
     ).all()
+    global_settings = await session.get(GlobalReviewSettings, 1)
+    if global_settings is None:
+        global_settings = GlobalReviewSettings(id=1)
+    effective_by_repository = {
+        repository.id: resolve(global_settings, repository, settings) for repository in values
+    }
     return templates.TemplateResponse(
         request,
         "repositories.html",
-        _context(request, principal, settings, repositories=values, repository_query=q or ""),
+        _context(
+            request,
+            principal,
+            settings,
+            repositories=values,
+            repository_query=q or "",
+            effective_by_repository=effective_by_repository,
+        ),
     )
 
 
