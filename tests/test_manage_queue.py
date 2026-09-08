@@ -45,7 +45,7 @@ async def test_pause_test_does_not_rewrite_repository_policy(
         global_settings = await session.get(GlobalReviewSettings, 1)
         assert global_settings is not None and global_settings.processing_paused is True
         audit = await session.scalar(
-            select(AdminAuditLog).where(AdminAuditLog.action == "QUEUE_POLICY")
+            select(AdminAuditLog).where(AdminAuditLog.action == "pause_processing")
         )
         assert audit is not None
         assert "repository policy unchanged" in audit.summary

@@ -8,6 +8,7 @@ import json
 
 from sqlalchemy import select
 
+from app.admin.control_plane import set_processing_state
 from app.db.session import get_session_factory
 from app.jobs.models import (
     AdminAuditLog,
@@ -77,23 +78,14 @@ async def set_policy(test_owner: str, test_name: str) -> None:
     """
     async with get_session_factory()() as session:
         global_settings = await session.get(GlobalReviewSettings, 1)
-        if global_settings is None:
-            global_settings = GlobalReviewSettings(id=1)
-            session.add(global_settings)
-        global_settings.processing_paused = True
-        session.add(
-            AdminAuditLog(
-                actor_login="operations",
-                action="QUEUE_POLICY",
-                target_type="global_settings",
-                target_id="1",
-                summary=(
-                    f"processing_paused=true; repository policy unchanged; "
-                    f"legacy test target {test_owner}/{test_name} is informational"
-                ),
-            )
+        version = int(global_settings.version if global_settings else 1)
+        await set_processing_state(
+            session,
+            paused=True,
+            actor_login="operations",
+            reason=f"legacy test target {test_owner}/{test_name} is informational",
+            expected_version=version,
         )
-        await session.commit()
         print(
             json.dumps(
                 {
@@ -109,20 +101,14 @@ async def resume() -> None:
     """Resume claiming after an explicitly audited pause window."""
     async with get_session_factory()() as session:
         global_settings = await session.get(GlobalReviewSettings, 1)
-        if global_settings is None:
-            global_settings = GlobalReviewSettings(id=1)
-            session.add(global_settings)
-        global_settings.processing_paused = False
-        session.add(
-            AdminAuditLog(
-                actor_login="operations",
-                action="QUEUE_POLICY",
-                target_type="global_settings",
-                target_id="1",
-                summary="processing_paused=false; manual resume",
-            )
+        version = int(global_settings.version if global_settings else 1)
+        await set_processing_state(
+            session,
+            paused=False,
+            actor_login="operations",
+            reason="manual resume",
+            expected_version=version,
         )
-        await session.commit()
         print(json.dumps({"processing_paused": False}))
 
 
@@ -130,20 +116,14 @@ async def pause() -> None:
     """Pause claiming after an explicitly audited maintenance pause window."""
     async with get_session_factory()() as session:
         global_settings = await session.get(GlobalReviewSettings, 1)
-        if global_settings is None:
-            global_settings = GlobalReviewSettings(id=1)
-            session.add(global_settings)
-        global_settings.processing_paused = True
-        session.add(
-            AdminAuditLog(
-                actor_login="operations",
-                action="QUEUE_POLICY",
-                target_type="global_settings",
-                target_id="1",
-                summary="processing_paused=true; maintenance pause",
-            )
+        version = int(global_settings.version if global_settings else 1)
+        await set_processing_state(
+            session,
+            paused=True,
+            actor_login="operations",
+            reason="maintenance pause",
+            expected_version=version,
         )
-        await session.commit()
         print(json.dumps({"processing_paused": True}))
 
 
