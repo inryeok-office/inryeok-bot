@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import BigInteger, select
 
 from app.codex.runner import FakeRunner
-from app.codex.schemas import Category, Finding, ReviewOutput, Severity
+from app.codex.schemas import Category, Finding, FindingScope, ReviewOutput, Severity
 from app.config import Settings
 from app.github.client import GitHubAPIError
 from app.jobs.models import FindingRecord, RepositorySettings, ReviewJob, ReviewRun, TriggerType
@@ -106,6 +106,65 @@ async def test_fake_end_to_end_worker_pipeline(app_client, monkeypatch) -> None:
         assert github.payload["comments"][0]["side"] == "RIGHT"
         assert "\uac80\ud1a0\ud588" in github.payload["body"]
         assert FakeCheckout.diff_arguments[:2] == ("a" * 40, "b" * 40)
+
+
+@pytest.mark.asyncio
+async def test_file_and_pr_findings_publish_in_review_summary(app_client, monkeypatch) -> None:
+    _, factory = app_client
+    monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
+    output = ReviewOutput(
+        summary="cross-file contract issue",
+        findings=[
+            Finding(
+                scope=FindingScope.FILE,
+                path="app.py",
+                category=Category.SECURITY,
+                severity=Severity.HIGH,
+                confidence=0.95,
+                title="Guard removed",
+                body="The file no longer enforces the access check.",
+                condition="a request reaches the handler without the guard",
+                impact="unauthorized access can be processed",
+                evidence="the handler is called without authorization",
+            ),
+            Finding(
+                scope=FindingScope.PR,
+                path=None,
+                category=Category.API_CONTRACT,
+                severity=Severity.MEDIUM,
+                confidence=0.95,
+                title="Caller contract mismatch",
+                body="The changed caller and callee disagree.",
+                condition="the changed API is called through the old contract",
+                impact="the request fails at runtime",
+                evidence="caller expects a field the callee no longer returns",
+            ),
+        ],
+    )
+    async with factory() as session:
+        session.add(
+            RepositorySettings(
+                installation_id=3, repository_owner="acme", repository_name="repo"
+            )
+        )
+        job = ReviewJob(
+            delivery_id="summary-findings",
+            installation_id=3,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=9,
+            base_sha="c" * 40,
+            head_sha="d" * 40,
+            trigger_type=TriggerType.AUTO,
+        )
+        session.add(job)
+        await session.commit()
+        github = FakeGitHub()
+        await ReviewService(session, github, FakeRunner(output)).execute(job)  # type: ignore[arg-type]
+        assert github.payload["comments"] == []
+        assert "파일·PR 단위 검토" in github.payload["body"]
+        run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == job.id))
+        assert run and run.finding_count == 2 and run.published_findings_count == 2
 
 
 @pytest.mark.asyncio

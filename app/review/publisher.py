@@ -27,6 +27,21 @@ def _summary_item(finding: Finding) -> str:
     )
 
 
+def _summary_finding(finding: Finding) -> str:
+    """Render a FILE/PR finding without inventing an inline location."""
+    location = f"`{_inline_text(finding.path)}`" if finding.path else "PR 전체"
+    sections = [f"#### {location} · {_inline_text(finding.title)}", finding.body.strip()]
+    if finding.condition:
+        sections.append(f"**발생 조건**: {_inline_text(finding.condition)}")
+    if finding.impact:
+        sections.append(f"**영향**: {_inline_text(finding.impact)}")
+    if finding.evidence:
+        sections.append(f"**근거**: {_inline_text(finding.evidence)}")
+    if finding.suggested_fix:
+        sections.append(f"**수정 방향**: {_inline_text(finding.suggested_fix)}")
+    return f"**{finding.severity.value} · {finding.category.value}**\n\n" + "\n\n".join(sections)
+
+
 def _finding_body(finding: Finding) -> str:
     return (
         f"**{_SEVERITY_ICONS[finding.severity.value]} {finding.severity.value} · {finding.category.value}**\n\n"
@@ -43,6 +58,8 @@ def build_review_payload(
     marker: str = "v1",
     comparison: dict[str, int] | None = None,
 ) -> dict[str, Any]:
+    inline_findings = [item for item in findings if item.scope.value == "LINE"]
+    summary_findings = [item for item in findings if item.scope.value != "LINE"]
     counts = Counter(item.severity.value for item in findings)
     table = "\n".join(
         f"| {_SEVERITY_LABELS[severity]} | {counts.get(severity, 0)} |"
@@ -60,6 +77,10 @@ def build_review_payload(
             + "\n\n"
             + "\n".join(_summary_item(item) for item in findings)
         )
+        if summary_findings:
+            details += "\n\n### 파일·PR 단위 검토\n\n" + "\n\n".join(
+                _summary_finding(item) for item in summary_findings
+            )
     else:
         overview = (
             "No issues requiring an inline comment were found."
@@ -118,6 +139,6 @@ def build_review_payload(
         "body": body,
         "comments": [
             {"path": item.path, "line": item.line, "side": "RIGHT", "body": _finding_body(item)}
-            for item in findings
+            for item in inline_findings
         ],
     }

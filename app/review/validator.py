@@ -24,6 +24,14 @@ class FindingValidationResult:
     def published_count(self) -> int:
         return len(self.findings)
 
+    @property
+    def inline_count(self) -> int:
+        return sum(item.scope == FindingScope.LINE for item in self.findings)
+
+    @property
+    def summary_count(self) -> int:
+        return self.published_count - self.inline_count
+
 
 SIMPLIFICATION_RISKS = {
     "bug",
@@ -147,32 +155,64 @@ def validate_findings_with_diagnostics(
 
     minimum_order = ORDER[Severity(minimum_severity)]
     for finding in findings:
-        if finding.scope != FindingScope.LINE:
-            # Publisher support for FILE/PR is intentionally explicit. Do not
-            # silently attach a file/PR claim to an arbitrary line.
-            if not _structured_evidence_is_complete(finding):
-                reject("MISSING_STRUCTURED_EVIDENCE")
-            else:
-                reject("UNSUPPORTED_SCOPE")
+        if not _structured_evidence_is_complete(finding):
+            reject("MISSING_STRUCTURED_EVIDENCE")
             continue
-        if finding.path is None or finding.line is None:
-            reject("INVALID_LOCATION")
+        if finding.scope == FindingScope.LINE:
+            if finding.path is None or finding.line is None:
+                reject("INVALID_LOCATION")
+                continue
+            try:
+                finding.path = normalize_path(finding.path)
+            except ValueError:
+                reject("INVALID_PATH")
+                continue
+            file = changed.get(finding.path)
+            if not file:
+                reject("FILE_NOT_CHANGED")
+                continue
+        elif finding.scope == FindingScope.FILE:
+            if finding.path is None:
+                reject("INVALID_LOCATION")
+                continue
+            try:
+                finding.path = normalize_path(finding.path)
+            except ValueError:
+                reject("INVALID_PATH")
+                continue
+            file = changed.get(finding.path)
+            if not file:
+                reject("FILE_NOT_CHANGED")
+                continue
+        elif finding.scope == FindingScope.PR:
+            if finding.path is not None:
+                try:
+                    finding.path = normalize_path(finding.path)
+                except ValueError:
+                    reject("INVALID_PATH")
+                    continue
+                if finding.path not in changed:
+                    reject("FILE_NOT_CHANGED")
+                    continue
+            if not changed:
+                reject("NO_CHANGED_FILES")
+                continue
+        else:
+            reject("UNSUPPORTED_SCOPE")
             continue
-        try:
-            finding.path = normalize_path(finding.path)
-        except ValueError:
-            reject("INVALID_PATH")
-            continue
-        file = changed.get(finding.path)
         mark = fingerprint(finding)
-        if not file:
-            reject("FILE_NOT_CHANGED")
-            continue
+        if finding.scope == FindingScope.LINE:
+            assert finding.path is not None and finding.line is not None
+            file = changed[finding.path]
+        else:
+            file = changed.get(finding.path) if finding.path else None
         changed_file_count += 1
-        if finding.line not in file.added_lines:
-            reject("LINE_NOT_RIGHT_SIDE")
-            continue
-        changed_line_count += 1
+        if finding.scope == FindingScope.LINE:
+            assert file is not None and finding.line is not None
+            if finding.line not in file.added_lines:
+                reject("LINE_NOT_RIGHT_SIDE")
+                continue
+            changed_line_count += 1
         if finding.confidence < min_confidence:
             reject("BELOW_CONFIDENCE")
             continue
@@ -204,7 +244,14 @@ def validate_findings_with_diagnostics(
         seen.add(mark)
         accepted.append(finding)
         deduplicated_count += 1
-    accepted.sort(key=lambda item: (-ORDER[item.severity], -item.confidence, item.path, item.line))
+    accepted.sort(
+        key=lambda item: (
+            -ORDER[item.severity],
+            -item.confidence,
+            item.path or "",
+            item.line or 0,
+        )
+    )
     limited = accepted[:max_findings]
     if len(accepted) > len(limited):
         rejected["MAX_FINDINGS_EXCEEDED"] += len(accepted) - len(limited)

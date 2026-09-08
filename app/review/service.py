@@ -262,6 +262,11 @@ class ReviewService:
                     posted = {"id": recovered_id}
                 run.github_review_id = int(posted["id"])
         for finding in findings:
+            # FindingRecord is the legacy inline-finding index. FILE/PR
+            # findings are retained in the ReviewRun summary and must not be
+            # coerced into a fictitious path/line for deduplication.
+            if finding.scope.value != "LINE" or finding.path is None or finding.line is None:
+                continue
             self.session.add(
                 FindingRecord(
                     review_run_id=run.id,

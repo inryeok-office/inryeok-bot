@@ -1,5 +1,5 @@
 from app.admin.auth import AdminAuthAdapter
-from app.codex.schemas import Category, Finding, Severity
+from app.codex.schemas import Category, Finding, FindingScope, Severity
 from app.config import Settings
 from app.github.schemas import is_review_command
 from app.logging import redact
@@ -59,6 +59,34 @@ def test_inline_review_keeps_valid_markdown_without_forcing_sections() -> None:
     assert "`findById()`" in inline
     assert "**\uc601\ud5a5**" in inline
     assert "```" not in inline
+
+
+def test_file_and_pr_findings_are_summary_only() -> None:
+    file_finding = _finding().model_copy(
+        update={
+            "scope": FindingScope.FILE,
+            "line": None,
+            "condition": "the guard is removed",
+            "impact": "unauthorized access is possible",
+            "evidence": "handler is called without authorization",
+            "suggested_fix": "restore the authorization check",
+        }
+    )
+    pr_finding = _finding().model_copy(
+        update={
+            "scope": FindingScope.PR,
+            "path": None,
+            "line": None,
+            "condition": "caller and callee disagree",
+            "impact": "the API fails at runtime",
+            "evidence": "caller expects a removed response field",
+        }
+    )
+    payload = build_review_payload([file_finding, pr_finding], 2, "a" * 40)
+    assert payload["comments"] == []
+    assert "파일·PR 단위 검토" in payload["body"]
+    assert "unauthorized access is possible" in payload["body"]
+    assert "PR 전체" in payload["body"]
 
 
 def test_no_findings_review_uses_korean_completion_message() -> None:

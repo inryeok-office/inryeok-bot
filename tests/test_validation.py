@@ -126,7 +126,14 @@ def test_file_and_pr_findings_are_not_attached_to_an_arbitrary_line():
     changed = {"app.py": ChangedFile("app.py", frozenset({2}))}
     result = validate_findings_with_diagnostics(
         [
-            finding(scope=FindingScope.FILE, path="app.py", line=None),
+            finding(
+                scope=FindingScope.FILE,
+                path="app.py",
+                line=None,
+                condition="a guard is removed",
+                impact="the request is unsafe",
+                evidence="the handler is now called without the guard",
+            ),
             finding(
                 scope=FindingScope.PR,
                 path=None,
@@ -141,8 +148,74 @@ def test_file_and_pr_findings_are_not_attached_to_an_arbitrary_line():
         True,
         10,
     )
+    assert {item.scope for item in result.findings} == {FindingScope.FILE, FindingScope.PR}
+    assert result.rejection_counts == {}
+
+
+def test_file_and_pr_findings_are_validated_and_published_as_summary_items():
+    changed = {
+        "app.py": ChangedFile("app.py", frozenset({2})),
+        "api.py": ChangedFile("api.py", frozenset({4})),
+    }
+    result = validate_findings_with_diagnostics(
+        [
+            finding(
+                scope=FindingScope.FILE,
+                path="app.py",
+                line=None,
+                condition="the removed guard is bypassed",
+                impact="unauthorized requests are processed",
+                evidence="the handler is called without the guard",
+            ),
+            finding(
+                scope=FindingScope.PR,
+                path=None,
+                line=None,
+                condition="the caller and callee use different contracts",
+                impact="the changed API fails at runtime",
+                evidence="caller expects a value that the callee no longer returns",
+            ),
+        ],
+        changed,
+        0.8,
+        True,
+        10,
+    )
+    assert len(result.findings) == 2
+    assert result.inline_count == 0
+    assert result.summary_count == 2
+    assert result.changed_file_count == 2
+    assert result.changed_line_count == 0
+
+
+def test_file_finding_must_reference_changed_file_and_structured_context():
+    changed = {"app.py": ChangedFile("app.py", frozenset({2}))}
+    result = validate_findings_with_diagnostics(
+        [
+            finding(
+                scope=FindingScope.FILE,
+                path="other.py",
+                line=None,
+                condition="condition",
+                impact="impact",
+                evidence="evidence",
+            ),
+            finding(
+                scope=FindingScope.FILE,
+                path="app.py",
+                line=None,
+                condition="condition",
+                impact=None,
+                evidence="evidence",
+            ),
+        ],
+        changed,
+        0.8,
+        True,
+        10,
+    )
     assert result.findings == []
     assert result.rejection_counts == {
+        "FILE_NOT_CHANGED": 1,
         "MISSING_STRUCTURED_EVIDENCE": 1,
-        "UNSUPPORTED_SCOPE": 1,
     }
