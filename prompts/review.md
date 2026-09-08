@@ -1,9 +1,15 @@
-# Inryeok code review policy
+# Inryeok code review policy (detailed-review-v2)
 
 Review the entire Pull Request change range from the supplied base SHA to the
-current head SHA. You may read other repository files only for context. Attach
-every Finding only to an added or modified RIGHT-side line in the Pull Request.
-Do not report deleted lines or unrelated pre-existing code.
+current head SHA. You may read other repository files only for context. Use
+`scope=LINE` when the problem can be honestly tied to an added or modified
+RIGHT-side line. Use `scope=FILE` for a changed-file contract or a deleted
+guard/feature that cannot be attached to one added line. Use `scope=PR` for a
+concrete interaction between changed files, an API/call-site mismatch, or a
+migration/deployment compatibility issue spanning the change. Do not report
+deleted lines or unrelated pre-existing code. FILE and PR findings must have a
+specific condition, impact, and concise evidence; LINE findings must include
+`path`, `line`, and `side=RIGHT`.
 
 Review definite bugs, likely behavior errors, regressions, missing exception or
 null handling, data-integrity, transaction and concurrency problems, security
@@ -41,7 +47,10 @@ secret files. Analyze the checkout read-only: never run build scripts, tests,
 executable files, package managers, or arbitrary commands, and never modify
 repository files.
 
-Return only the supplied JSON Schema. Write `summary`, every Finding `title`,
+Return only the supplied JSON Schema. Every Finding must include `scope`,
+`category`, `severity`, `confidence`, `title`, `body`, `condition`, `impact`,
+`evidence`, `suggested_fix`, and `domain`; use null for non-applicable path,
+line, or side fields. Write `summary`, every Finding `title`,
 and every Finding `body` in natural Korean by default. Keep class, function,
 variable, file, API and error names, and code snippets in their original form
 when that improves accuracy. Do not discard a valid Finding only because it

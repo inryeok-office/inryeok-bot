@@ -311,6 +311,67 @@ async def test_existing_review_marker_recovers_without_reposting(app_client, mon
 
 
 @pytest.mark.asyncio
+async def test_same_head_completed_review_skips_before_runner(app_client, monkeypatch) -> None:
+    """A duplicate command must not consume another Codex execution."""
+    _, factory = app_client
+    monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
+    from app.review.domains import PROMPT_VERSION
+
+    class CountingRunner(FakeRunner):
+        calls = 0
+
+        async def run(self, *args: object, **kwargs: object) -> ReviewOutput:
+            self.calls += 1
+            return await super().run(*args, **kwargs)
+
+    async with factory() as session:
+        session.add(
+            RepositorySettings(installation_id=16, repository_owner="acme", repository_name="repo")
+        )
+        previous = ReviewJob(
+            delivery_id="completed-before-duplicate",
+            installation_id=16,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=16,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.COMMAND,
+            prompt_version=PROMPT_VERSION,
+            reasoning_effort="medium",
+        )
+        session.add(previous)
+        await session.flush()
+        session.add(
+            ReviewRun(
+                job_id=previous.id,
+                base_sha=previous.base_sha,
+                head_sha=previous.head_sha,
+                summary="complete",
+                github_review_id=123,
+                reviewed_file_count=1,
+                finding_count=0,
+            )
+        )
+        duplicate = ReviewJob(
+            delivery_id="duplicate-command",
+            installation_id=16,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=16,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.COMMAND,
+        )
+        session.add(duplicate)
+        await session.commit()
+        runner = CountingRunner(ReviewOutput(summary="unused", findings=[]))
+        with pytest.raises(ReviewSkipped, match="same review input"):
+            await ReviewService(session, FakeGitHub(), runner).execute(duplicate)  # type: ignore[arg-type]
+        assert runner.calls == 0
+
+
+@pytest.mark.asyncio
 async def test_review_timeout_rechecks_marker_before_failure(app_client, monkeypatch) -> None:
     _, factory = app_client
     monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)

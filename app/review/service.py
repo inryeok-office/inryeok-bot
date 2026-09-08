@@ -52,6 +52,31 @@ class ReviewService:
         effective = resolve(global_settings, config, self.github.settings)
         if not effective.enabled:
             raise ReviewSkipped("repository is disabled")
+        # A repeated /review for the same head must not spend another Codex
+        # execution merely to discover the existing GitHub marker afterwards.
+        # Compare the immutable execution inputs as well as the head so a
+        # prompt/profile/model change intentionally permits a fresh review.
+        completed_jobs = (
+            await self.session.scalars(
+                select(ReviewJob)
+                .join(ReviewRun, ReviewRun.job_id == ReviewJob.id)
+                .where(
+                    ReviewRun.github_review_id.is_not(None),
+                    ReviewJob.installation_id == job.installation_id,
+                    ReviewJob.repository_owner == job.repository_owner,
+                    ReviewJob.repository_name == job.repository_name,
+                    ReviewJob.pull_request_number == job.pull_request_number,
+                    ReviewJob.head_sha == job.head_sha,
+                    ReviewJob.prompt_version == PROMPT_VERSION,
+                )
+            )
+        ).all()
+        for prior_job in completed_jobs:
+            if (
+                prior_job.model == effective.model
+                and prior_job.reasoning_effort == effective.reasoning_effort
+            ):
+                raise ReviewSkipped("same review input already completed")
         # Preserve the effective policy used by this job for auditability.
         job.model = effective.model
         job.reasoning_effort = effective.reasoning_effort

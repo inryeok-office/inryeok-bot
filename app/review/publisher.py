@@ -138,7 +138,12 @@ def build_review_payload(
         "event": "COMMENT",
         "body": body,
         "comments": [
-            {"path": item.path, "line": item.line, "side": "RIGHT", "body": _finding_body(item)}
+            {
+                "path": item.path,
+                "line": item.line,
+                "side": item.side or "RIGHT",
+                "body": _finding_body(item),
+            }
             for item in inline_findings
         ],
     }
