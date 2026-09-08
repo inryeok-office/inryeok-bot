@@ -178,6 +178,20 @@ class JobRepository:
         await self.session.refresh(job)
         return job
 
+    async def skip_pending(self, job_id: int, reason: str) -> ReviewJob | None:
+        """Auditable terminal transition for an invalid pending job."""
+        job = await self.session.scalar(
+            select(ReviewJob).where(ReviewJob.id == job_id).with_for_update()
+        )
+        if job is None or job.status != JobStatus.PENDING:
+            return None
+        job.status = JobStatus.SKIPPED
+        job.error_code = reason[:100]
+        job.error_message = "Skipped by audited operations decision"
+        job.finished_at = datetime.now(UTC)
+        await self.session.commit()
+        return job
+
     async def recover_stale(self, seconds: int, max_attempts: int) -> int:
         cutoff = datetime.now(UTC) - timedelta(seconds=seconds)
         result = await self.session.execute(

@@ -493,23 +493,42 @@ async def github_webhook(
 
 
 async def recover_stale_deliveries(
-    session: AsyncSession, *, threshold_seconds: int = 900, max_attempts: int = 3,
+    session: AsyncSession,
+    *,
+    threshold_seconds: int = 900,
+    max_attempts: int = 3,
     apply: bool = False,
 ) -> list[dict[str, object]]:
     """Safely classify stale PROCESSING deliveries without replaying payloads."""
     cutoff = datetime.now(UTC) - timedelta(seconds=threshold_seconds)
-    rows = list((await session.scalars(select(WebhookDelivery).where(
-        WebhookDelivery.status == DELIVERY_PROCESSING,
-        WebhookDelivery.processing_started_at < cutoff,
-    ).order_by(WebhookDelivery.id))).all())
+    rows = list(
+        (
+            await session.scalars(
+                select(WebhookDelivery)
+                .where(
+                    WebhookDelivery.status == DELIVERY_PROCESSING,
+                    WebhookDelivery.processing_started_at < cutoff,
+                )
+                .order_by(WebhookDelivery.id)
+            )
+        ).all()
+    )
     report: list[dict[str, object]] = []
     for delivery in rows:
-        related = await session.scalar(select(ReviewJob.id).where(
-            ReviewJob.delivery_id == delivery.delivery_id
-        ))
-        reason = "JOB_ALREADY_ENQUEUED" if related is not None else DELIVERY_MANUAL_REDELIVERY_REQUIRED
-        report.append({"delivery_id": delivery.delivery_id, "job_id": related,
-                       "reason": reason, "attempt_count": delivery.attempt_count})
+        related = await session.scalar(
+            select(ReviewJob.id).where(ReviewJob.delivery_id == delivery.delivery_id)
+        )
+        reason = (
+            "JOB_ALREADY_ENQUEUED" if related is not None else DELIVERY_MANUAL_REDELIVERY_REQUIRED
+        )
+        report.append(
+            {
+                "delivery_id": delivery.delivery_id,
+                "job_id": related,
+                "reason": reason,
+                "attempt_count": delivery.attempt_count,
+            }
+        )
         if not apply:
             continue
         if delivery.attempt_count >= max_attempts:

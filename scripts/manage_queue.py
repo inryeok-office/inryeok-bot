@@ -13,9 +13,9 @@ from app.jobs.models import (
     AdminAuditLog,
     GlobalReviewSettings,
     JobStatus,
-    RepositorySettings,
     ReviewJob,
 )
+from app.jobs.repository import JobRepository
 
 
 async def audit() -> None:
@@ -147,35 +147,30 @@ async def pause() -> None:
         print(json.dumps({"processing_paused": True}))
 
 
-async def activate_repositories(names: list[str]) -> None:
-    """Enable only explicitly named repositories and audit the change."""
-    requested = {name.casefold() for name in names}
+async def skip_job(job_id: int, reason: str) -> None:
     async with get_session_factory()() as session:
-        rows = list(await session.scalars(select(RepositorySettings)))
-        changed: list[str] = []
-        for repository in rows:
-            key = f"{repository.repository_owner}/{repository.repository_name}".casefold()
-            if key in requested:
-                repository.enabled = True
-                repository.auto_review = True
-                changed.append(key)
-        missing = sorted(requested - set(changed))
-        if missing:
-            raise ValueError(f"repositories are not registered: {', '.join(missing)}")
+        job = await JobRepository(session).skip_pending(job_id, reason)
+        if job is None:
+            raise ValueError("job is missing or not pending")
         session.add(
             AdminAuditLog(
                 actor_login="operations",
-                action="REPOSITORY_POLICY",
-                target_type="repositories",
-                target_id=(",".join(sorted(changed)))[:128],
-                summary=(
-                    f"enabled {len(changed)} explicitly named repositories; "
-                    "automatic review enabled"
-                ),
+                action="SKIP_JOB",
+                target_type="review_job",
+                target_id=str(job_id),
+                summary=f"audited skip: {reason[:80]}",
             )
         )
         await session.commit()
-        print(json.dumps({"enabled": sorted(changed), "automatic_review": True}))
+        print(json.dumps({"job_id": job_id, "status": job.status.value, "reason": reason}))
+
+
+async def activate_repositories(names: list[str]) -> None:
+    """Retained only as a compatibility guard; never mutates policy rows."""
+    raise ValueError(
+        "activate-repositories is retired; use the audited admin policy "
+        "command with an explicit override"
+    )
 
 
 def main() -> None:
@@ -189,6 +184,21 @@ def main() -> None:
     policy.add_argument("name")
     activate = sub.add_parser("activate-repositories")
     activate.add_argument("repositories", nargs="+", metavar="OWNER/REPOSITORY")
+    skip = sub.add_parser("skip-job")
+    skip.add_argument("job_id", type=int)
+    skip.add_argument(
+        "reason",
+        choices=[
+            "STALE_HEAD",
+            "PR_CLOSED",
+            "PR_MERGED",
+            "PR_DRAFT",
+            "INSTALLATION_INACTIVE",
+            "REPOSITORY_NOT_ACCESSIBLE",
+            "POLICY_DISABLED",
+            "DUPLICATE_REVIEW_IDENTITY",
+        ],
+    )
     args = parser.parse_args()
     if args.command == "audit":
         asyncio.run(audit())
@@ -198,6 +208,8 @@ def main() -> None:
         asyncio.run(activate_repositories(args.repositories))
     elif args.command == "pause":
         asyncio.run(pause())
+    elif args.command == "skip-job":
+        asyncio.run(skip_job(args.job_id, args.reason))
     else:
         asyncio.run(resume())
 
