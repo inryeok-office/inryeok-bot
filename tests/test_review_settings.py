@@ -126,3 +126,62 @@ def test_explicit_global_thresholds_are_not_overwritten_by_profile() -> None:
     assert effective.minimum_severity == "MEDIUM"
     assert effective.include_low_severity is False
     assert effective.max_findings == 12
+
+
+def test_profile_provenance_can_explicitly_apply_thorough_defaults() -> None:
+    """A persisted provenance flag removes ambiguous value-based inference."""
+    global_settings = GlobalReviewSettings(
+        id=1,
+        review_profile="THOROUGH",
+        minimum_confidence=0.9,
+        minimum_severity="LOW",
+        include_low_severity=False,
+        max_findings=30,
+    )
+    effective = resolve(
+        global_settings,
+        _repository(),
+        _settings(),
+        profile_defaults_inherited=True,
+    )
+    assert effective.minimum_confidence == 0.8
+    assert effective.minimum_severity == "LOW"
+    assert effective.include_low_severity is True
+    assert effective.max_findings == 30
+
+
+def test_explicit_profile_provenance_preserves_global_thresholds() -> None:
+    global_settings = GlobalReviewSettings(
+        id=1,
+        review_profile="THOROUGH",
+        minimum_confidence=0.9,
+        minimum_severity="LOW",
+        include_low_severity=False,
+        max_findings=30,
+    )
+    effective = resolve(
+        global_settings,
+        _repository(),
+        _settings(),
+        profile_defaults_inherited=False,
+    )
+    assert effective.minimum_confidence == 0.9
+    assert effective.minimum_severity == "LOW"
+    assert effective.include_low_severity is False
+    assert effective.max_findings == 30
+
+
+def test_repository_threshold_overrides_win_over_inherited_profile() -> None:
+    repository = _repository()
+    repository.override_minimum_confidence = 0.95
+    repository.override_include_low_severity = False
+    repository.override_max_findings = 7
+    effective = resolve(
+        GlobalReviewSettings(id=1, review_profile="THOROUGH"),
+        repository,
+        _settings(),
+        profile_defaults_inherited=True,
+    )
+    assert effective.minimum_confidence == 0.95
+    assert effective.include_low_severity is False
+    assert effective.max_findings == 7

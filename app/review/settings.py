@@ -90,8 +90,23 @@ def validate_paths(patterns: str) -> tuple[str, ...]:
 
 
 def resolve(
-    global_settings: GlobalReviewSettings, repository: RepositorySettings, settings: Settings
+    global_settings: GlobalReviewSettings,
+    repository: RepositorySettings,
+    settings: Settings,
+    *,
+    profile_defaults_inherited: bool | None = None,
 ) -> EffectiveReviewSettings:
+    """Resolve one immutable review policy.
+
+    ``profile_defaults_inherited`` is intentionally optional for backwards
+    compatibility with the pre-provenance database schema.  Once the global
+    settings row records whether its threshold fields are inherited, callers
+    should pass that value explicitly.  Inferring provenance from threshold
+    values is inherently ambiguous (an administrator may intentionally choose
+    the same values as a profile), so the legacy heuristic remains only as a
+    migration bridge.
+    """
+
     def choose[T](override: T | None, global_value: T) -> T:
         return global_value if override is None else override
 
@@ -113,10 +128,14 @@ def resolve(
     # 0.9/MEDIUM/10/false.  Treat that exact tuple as legacy defaults so a
     # selected profile takes effect without overwriting intentional settings.
     legacy_defaults = (
-        global_settings.minimum_confidence in (None, 0.9)
-        and (global_settings.minimum_severity or "MEDIUM").upper() == "MEDIUM"
-        and (global_settings.max_findings or 10) == 10
-        and not (global_settings.include_low_severity or False)
+        profile_defaults_inherited
+        if profile_defaults_inherited is not None
+        else (
+            global_settings.minimum_confidence in (None, 0.9)
+            and (global_settings.minimum_severity or "MEDIUM").upper() == "MEDIUM"
+            and (global_settings.max_findings or 10) == 10
+            and not (global_settings.include_low_severity or False)
+        )
     )
 
     def profile_value[T](profile_default: T, current: T) -> T:
