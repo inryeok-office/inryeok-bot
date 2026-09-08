@@ -133,6 +133,7 @@ async def test_claim_skips_disabled_repository(app_client) -> None:
                 repository_name="r",
                 enabled=False,
                 installed=True,
+                override_enabled=False,
             )
         )
         session.add(

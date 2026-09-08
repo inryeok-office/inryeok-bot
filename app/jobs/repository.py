@@ -21,8 +21,11 @@ class QueueCapacityError(RuntimeError):
 def claim_statement() -> Select[tuple[ReviewJob]]:
     repository_match = (
         (RepositorySettings.installation_id == ReviewJob.installation_id)
-        & (RepositorySettings.repository_owner == ReviewJob.repository_owner)
-        & (RepositorySettings.repository_name == ReviewJob.repository_name)
+        & (
+            func.lower(RepositorySettings.repository_owner)
+            == func.lower(ReviewJob.repository_owner)
+        )
+        & (func.lower(RepositorySettings.repository_name) == func.lower(ReviewJob.repository_name))
     )
     global_enabled = ~exists(
         select(GlobalReviewSettings.id).where(
@@ -34,37 +37,38 @@ def claim_statement() -> Select[tuple[ReviewJob]]:
         select(RepositorySettings.id).where(
             repository_match,
             RepositorySettings.installed.is_(True),
-            RepositorySettings.enabled.is_(True),
             (
-                RepositorySettings.override_enabled.is_(None)
-                | RepositorySettings.override_enabled.is_(True)
-            ),
-            # Nullable overrides are explicit policy; NULL inherits the
-            # corresponding global setting.  Materialized repository flags
-            # remain an additional safety gate for legacy rows.
-            (
-                (ReviewJob.trigger_type == TriggerType.AUTO)
-                & RepositorySettings.auto_review.is_(True)
+                (RepositorySettings.override_enabled.is_(None))
                 & ~exists(
                     select(GlobalReviewSettings.id).where(
                         GlobalReviewSettings.id == 1,
-                        GlobalReviewSettings.auto_review_enabled.is_(False),
+                        GlobalReviewSettings.enabled.is_(False),
                     )
                 )
+                | RepositorySettings.override_enabled.is_(True)
+            ),
+            (
+                (ReviewJob.trigger_type == TriggerType.AUTO)
                 & (
-                    RepositorySettings.override_auto_review_enabled.is_(None)
+                    (RepositorySettings.override_auto_review_enabled.is_(None))
+                    & ~exists(
+                        select(GlobalReviewSettings.id).where(
+                            GlobalReviewSettings.id == 1,
+                            GlobalReviewSettings.auto_review_enabled.is_(False),
+                        )
+                    )
                     | RepositorySettings.override_auto_review_enabled.is_(True)
                 )
                 | (ReviewJob.trigger_type == TriggerType.COMMAND)
                 & (
-                    RepositorySettings.override_command_review_enabled.is_(None)
-                    | RepositorySettings.override_command_review_enabled.is_(True)
-                )
-                & ~exists(
-                    select(GlobalReviewSettings.id).where(
-                        GlobalReviewSettings.id == 1,
-                        GlobalReviewSettings.command_review_enabled.is_(False),
+                    (RepositorySettings.override_command_review_enabled.is_(None))
+                    & ~exists(
+                        select(GlobalReviewSettings.id).where(
+                            GlobalReviewSettings.id == 1,
+                            GlobalReviewSettings.command_review_enabled.is_(False),
+                        )
                     )
+                    | RepositorySettings.override_command_review_enabled.is_(True)
                 )
             ),
         )

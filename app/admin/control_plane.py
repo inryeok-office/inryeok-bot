@@ -350,9 +350,7 @@ _GLOBAL_PATCH_FIELDS = frozenset(
 )
 
 
-def validate_global_policy_patch(
-    patch: Mapping[str, Any], settings: Settings
-) -> dict[str, Any]:
+def validate_global_policy_patch(patch: Mapping[str, Any], settings: Settings) -> dict[str, Any]:
     """Validate a global review-default PATCH without applying omitted fields."""
 
     unknown = set(patch) - _GLOBAL_PATCH_FIELDS
@@ -378,9 +376,7 @@ def validate_global_policy_patch(
     if "model" in normalized and normalized["model"]:
         validate_choice("ko", "BALANCED", str(normalized["model"]), settings)
     if "reasoning_effort" in normalized:
-        validate_choice(
-            "ko", "BALANCED", None, settings, str(normalized["reasoning_effort"])
-        )
+        validate_choice("ko", "BALANCED", None, settings, str(normalized["reasoning_effort"]))
     if "max_findings" in normalized:
         value = int(normalized["max_findings"])
         if not 1 <= value <= 50:

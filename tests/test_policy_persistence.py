@@ -234,6 +234,32 @@ async def test_claim_matches_global_enabled_default(app_client) -> None:
         assert await JobRepository(session).claim_next() is None
 
 
+async def test_claim_uses_global_default_when_materialized_flag_is_stale(app_client) -> None:
+    """A NULL override inherits the global policy even if a legacy flag is false."""
+
+    _, factory = app_client
+    async with factory() as session:
+        session.add(GlobalReviewSettings(id=1, enabled=True, auto_review_enabled=True))
+        session.add(
+            RepositorySettings(
+                installation_id=51,
+                repository_owner="acme",
+                repository_name="policy-repo",
+                installed=True,
+                enabled=False,
+                auto_review=False,
+                override_enabled=None,
+                override_auto_review_enabled=None,
+            )
+        )
+        await session.flush()
+        await _add_pending_job(
+            session, delivery="claim-stale-materialized", trigger=TriggerType.AUTO
+        )
+        claimed = await JobRepository(session).claim_next()
+        assert claimed is not None
+
+
 async def test_claim_respects_command_review_override(app_client) -> None:
     """Manual jobs must use manual-review policy, independently of auto review."""
 

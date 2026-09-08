@@ -24,7 +24,7 @@ from app.jobs.models import (
 )
 from app.jobs.repository import JobRepository
 from app.review.domains import PROMPT_VERSION, effective_domains
-from app.review.settings import PROFILE_DEFAULTS, resolve, validate_choice, validate_paths
+from app.review.settings import PROFILE_DEFAULTS, validate_choice, validate_paths
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
