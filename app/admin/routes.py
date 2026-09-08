@@ -339,6 +339,7 @@ async def audit_log(
 
 @router.post("/settings")
 async def update_global_settings(
+    request: Request,
     csrf: str = Form(..., alias="_csrf"),
     language: str = Form("ko"),
     review_profile: str = Form("BALANCED"),
@@ -389,49 +390,73 @@ async def update_global_settings(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     value = await session.get(GlobalReviewSettings, 1) or GlobalReviewSettings(id=1)
     session.add(value)
-    value.enabled, value.auto_review_enabled, value.command_review_enabled = (
-        enabled,
-        auto_review_enabled,
-        command_review_enabled,
-    )
-    if processing_paused is not None:
+    form = await request.form() if request is not None else None
+
+    def submitted(name: str) -> bool:
+        return form is not None and name in form
+
+    if submitted("enabled"):
+        value.enabled = enabled
+    if submitted("auto_review_enabled"):
+        value.auto_review_enabled = auto_review_enabled
+    if submitted("command_review_enabled"):
+        value.command_review_enabled = command_review_enabled
+    if submitted("processing_paused") and processing_paused is not None:
         value.processing_paused = processing_paused
-    value.language, value.review_profile, value.model = language, review_profile, model or None
-    value.reasoning_effort = reasoning_effort
-    value.max_findings, value.minimum_confidence, value.codex_timeout_seconds = (
-        max_findings,
-        minimum_confidence,
-        codex_timeout_seconds,
-    )
-    value.include_low_severity, value.ignored_paths, value.updated_by = (
-        include_low_severity,
-        ignored_paths,
-        principal.github_login,
-    )
-    value.minimum_severity = minimum_severity.upper()
-    value.enabled_categories = enabled_categories
-    value.review_domain_mode = review_domain_mode
-    value.manual_review_domains = ",".join(manual_review_domains)
-    (
-        value.review_on_opened,
-        value.review_on_reopened,
-        value.review_on_ready_for_review,
-        value.review_on_synchronize,
-    ) = (
-        review_on_opened,
-        review_on_reopened,
-        review_on_ready_for_review,
-        review_on_synchronize,
-    )
-    value.synchronize_debounce_seconds = synchronize_debounce_seconds
-    value.command_cooldown_seconds = command_cooldown_seconds
-    profile_default = PROFILE_DEFAULTS[review_profile]
-    value.profile_defaults_inherited = (
-        minimum_confidence == profile_default.minimum_confidence
-        and minimum_severity.upper() == profile_default.minimum_severity
-        and max_findings == profile_default.max_findings
-        and include_low_severity == profile_default.include_low_severity
-    )
+    if submitted("language"):
+        value.language = language
+    if submitted("review_profile"):
+        value.review_profile = review_profile
+    if submitted("model"):
+        value.model = model or None
+    if submitted("reasoning_effort"):
+        value.reasoning_effort = reasoning_effort
+    if submitted("max_findings"):
+        value.max_findings = max_findings
+    if submitted("minimum_confidence"):
+        value.minimum_confidence = minimum_confidence
+    if submitted("codex_timeout_seconds"):
+        value.codex_timeout_seconds = codex_timeout_seconds
+    if submitted("include_low_severity"):
+        value.include_low_severity = include_low_severity
+    if submitted("ignored_paths"):
+        value.ignored_paths = ignored_paths
+    value.updated_by = principal.github_login
+    if submitted("minimum_severity"):
+        value.minimum_severity = minimum_severity.upper()
+    if submitted("enabled_categories"):
+        value.enabled_categories = enabled_categories
+    if submitted("review_domain_mode"):
+        value.review_domain_mode = review_domain_mode
+    if submitted("manual_review_domains"):
+        value.manual_review_domains = ",".join(manual_review_domains)
+    for field, submitted_name in (
+        ("review_on_opened", "review_on_opened"),
+        ("review_on_reopened", "review_on_reopened"),
+        ("review_on_ready_for_review", "review_on_ready_for_review"),
+        ("review_on_synchronize", "review_on_synchronize"),
+        ("synchronize_debounce_seconds", "synchronize_debounce_seconds"),
+        ("command_cooldown_seconds", "command_cooldown_seconds"),
+    ):
+        if submitted(submitted_name):
+            setattr(value, field, locals()[field])
+    if any(
+        submitted(name)
+        for name in (
+            "review_profile",
+            "minimum_confidence",
+            "minimum_severity",
+            "max_findings",
+            "include_low_severity",
+        )
+    ):
+        profile_default = PROFILE_DEFAULTS[review_profile]
+        value.profile_defaults_inherited = (
+            value.minimum_confidence == profile_default.minimum_confidence
+            and value.minimum_severity.upper() == profile_default.minimum_severity
+            and value.max_findings == profile_default.max_findings
+            and value.include_low_severity == profile_default.include_low_severity
+        )
     session.add(
         AdminAuditLog(
             actor_login=principal.github_login,
@@ -452,8 +477,8 @@ async def update_repository(
     csrf: str = Form(..., alias="_csrf"),
     enabled: bool = Form(False),
     auto_review: bool = Form(False),
-    min_confidence: float = Form(...),
-    max_findings: int = Form(...),
+    min_confidence: float | None = Form(None),
+    max_findings: int | None = Form(None),
     include_low_severity: bool = Form(False),
     ignore_draft: bool = Form(False),
     ignore_patterns: str = Form(""),
@@ -489,13 +514,28 @@ async def update_repository(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "repository not found")
     _ensure_allowed(repository.repository_owner, settings)
     await _require_repository_admin(repository, principal, settings)
-    repository.enabled = enabled
-    repository.auto_review = auto_review
-    repository.min_confidence = max(0, min(1, min_confidence))
-    repository.max_findings = max(1, min(50, max_findings))
-    repository.include_low_severity = include_low_severity
-    repository.ignore_draft = ignore_draft
-    repository.ignore_patterns = ignore_patterns
+    # A settings form is allowed to update one section at a time.  In
+    # particular, unchecked checkboxes are absent from an HTML form; treating
+    # an absent field as false silently overwrites unrelated settings.
+    form = await request.form()
+
+    def present(name: str) -> bool:
+        return name in form
+
+    if present("enabled"):
+        repository.enabled = enabled
+    if present("auto_review"):
+        repository.auto_review = auto_review
+    if present("min_confidence") and min_confidence is not None:
+        repository.min_confidence = max(0, min(1, min_confidence))
+    if present("max_findings") and max_findings is not None:
+        repository.max_findings = max(1, min(50, max_findings))
+    if present("include_low_severity"):
+        repository.include_low_severity = include_low_severity
+    if present("ignore_draft"):
+        repository.ignore_draft = ignore_draft
+    if present("ignore_patterns"):
+        repository.ignore_patterns = ignore_patterns
     try:
         validate_choice(
             override_language or "ko",
@@ -504,49 +544,69 @@ async def update_repository(
             settings,
             override_reasoning_effort or "medium",
         )
-        repository.override_enabled = _optional_bool(override_enabled)
-        repository.override_auto_review_enabled = _optional_bool(override_auto_review_enabled)
-        repository.override_command_review_enabled = _optional_bool(override_command_review_enabled)
-        repository.override_language = override_language or None
-        repository.override_review_profile = override_review_profile or None
-        repository.override_model = override_model or None
-        repository.override_reasoning_effort = override_reasoning_effort or None
-        repository.override_max_findings = _optional_int(override_max_findings, 1, 50)
-        repository.override_minimum_confidence = _optional_float(
-            override_minimum_confidence, 0.8, 1
-        )
-        repository.override_include_low_severity = _optional_bool(override_include_low_severity)
-        repository.override_ignored_paths = override_ignored_paths or None
-        if repository.override_ignored_paths is not None:
-            validate_paths(repository.override_ignored_paths)
-        repository.override_timeout_seconds = _optional_int(override_timeout_seconds, 30, 3600)
-        if override_minimum_severity and override_minimum_severity not in {
-            "CRITICAL",
-            "HIGH",
-            "MEDIUM",
-            "LOW",
-        }:
-            raise ValueError("unsupported minimum severity")
-        repository.override_minimum_severity = override_minimum_severity or None
-        repository.override_enabled_categories = override_enabled_categories or None
-        repository.override_review_on_opened = _optional_bool(override_review_on_opened)
-        repository.override_review_on_reopened = _optional_bool(override_review_on_reopened)
-        repository.override_review_on_ready_for_review = _optional_bool(
-            override_review_on_ready_for_review
-        )
-        repository.override_review_on_synchronize = _optional_bool(override_review_on_synchronize)
-        repository.override_synchronize_debounce_seconds = _optional_int(
-            override_synchronize_debounce_seconds, 0, 3600
-        )
-        repository.override_command_cooldown_seconds = _optional_int(
-            override_command_cooldown_seconds, 0, 3600
-        )
-        if override_review_domain_mode not in {"inherit", "AUTO", "MANUAL"}:
-            raise ValueError("unsupported review domain mode")
-        repository.override_review_domain_mode = (
-            None if override_review_domain_mode == "inherit" else override_review_domain_mode
-        )
-        repository.override_manual_review_domains = ",".join(override_manual_review_domains) or None
+        if present("override_enabled"):
+            repository.override_enabled = _optional_bool(override_enabled)
+        if present("override_auto_review_enabled"):
+            repository.override_auto_review_enabled = _optional_bool(override_auto_review_enabled)
+        if present("override_command_review_enabled"):
+            repository.override_command_review_enabled = _optional_bool(
+                override_command_review_enabled
+            )
+        if present("override_language"):
+            repository.override_language = override_language or None
+        if present("override_review_profile"):
+            repository.override_review_profile = override_review_profile or None
+        if present("override_model"):
+            repository.override_model = override_model or None
+        if present("override_reasoning_effort"):
+            repository.override_reasoning_effort = override_reasoning_effort or None
+        if present("override_max_findings"):
+            repository.override_max_findings = _optional_int(override_max_findings, 1, 50)
+        if present("override_minimum_confidence"):
+            repository.override_minimum_confidence = _optional_float(
+                override_minimum_confidence, 0.8, 1
+            )
+        if present("override_include_low_severity"):
+            repository.override_include_low_severity = _optional_bool(override_include_low_severity)
+        if present("override_ignored_paths"):
+            repository.override_ignored_paths = override_ignored_paths or None
+            if repository.override_ignored_paths is not None:
+                validate_paths(repository.override_ignored_paths)
+        if present("override_timeout_seconds"):
+            repository.override_timeout_seconds = _optional_int(override_timeout_seconds, 30, 3600)
+        if present("override_minimum_severity"):
+            if override_minimum_severity and override_minimum_severity not in {
+                "CRITICAL",
+                "HIGH",
+                "MEDIUM",
+                "LOW",
+            }:
+                raise ValueError("unsupported minimum severity")
+            repository.override_minimum_severity = override_minimum_severity or None
+        if present("override_enabled_categories"):
+            repository.override_enabled_categories = override_enabled_categories or None
+        for event in ("opened", "reopened", "ready_for_review", "synchronize"):
+            name = f"override_review_on_{event}"
+            if present(name):
+                setattr(repository, name, _optional_bool(locals()[name]))
+        if present("override_synchronize_debounce_seconds"):
+            repository.override_synchronize_debounce_seconds = _optional_int(
+                override_synchronize_debounce_seconds, 0, 3600
+            )
+        if present("override_command_cooldown_seconds"):
+            repository.override_command_cooldown_seconds = _optional_int(
+                override_command_cooldown_seconds, 0, 3600
+            )
+        if present("override_review_domain_mode"):
+            if override_review_domain_mode not in {"inherit", "AUTO", "MANUAL"}:
+                raise ValueError("unsupported review domain mode")
+            repository.override_review_domain_mode = (
+                None if override_review_domain_mode == "inherit" else override_review_domain_mode
+            )
+        if present("override_manual_review_domains"):
+            repository.override_manual_review_domains = (
+                ",".join(override_manual_review_domains) or None
+            )
         if repository.override_review_domain_mode == "MANUAL":
             effective_domains("MANUAL", repository.override_manual_review_domains, None)
     except ValueError as exc:

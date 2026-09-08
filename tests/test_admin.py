@@ -170,6 +170,43 @@ async def test_repository_admin_can_change_settings(app_client) -> None:
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_repository_settings_partial_form_preserves_unsubmitted_values(app_client) -> None:
+    client, factory, settings, principal, repository_id = await authenticated_repository(app_client)
+    async with factory() as session:
+        repository = await session.get(RepositorySettings, repository_id)
+        assert repository
+        repository.enabled = True
+        repository.auto_review = True
+        repository.ignore_draft = False
+        repository.override_auto_review_enabled = True
+        repository.override_review_profile = "THOROUGH"
+        await session.commit()
+
+    respx.get("https://api.github.com/repos/acme/repo").mock(
+        return_value=httpx.Response(200, json={"permissions": {"admin": True}})
+    )
+    response = await client.post(
+        f"/admin/repositories/{repository_id}/settings",
+        data={
+            "_csrf": csrf_token(principal, settings),
+            # Deliberately submit only one legacy field.  Missing checkbox and
+            # override fields must not be interpreted as false/inherit.
+            "ignore_patterns": "generated/**",
+        },
+    )
+    assert response.status_code == 303
+    async with factory() as session:
+        repository = await session.get(RepositorySettings, repository_id)
+        assert repository
+        assert repository.enabled and repository.auto_review
+        assert repository.ignore_draft is False
+        assert repository.override_auto_review_enabled is True
+        assert repository.override_review_profile == "THOROUGH"
+        assert repository.ignore_patterns == "generated/**"
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_non_admin_cannot_change_settings(app_client) -> None:
     client, _, settings, principal, repository_id = await authenticated_repository(app_client)
     respx.get("https://api.github.com/repos/acme/repo").mock(
