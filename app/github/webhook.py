@@ -65,7 +65,9 @@ async def _disable_installation(session: AsyncSession, installation_id: int) -> 
         )
     ).all()
     for value in values:
-        value.enabled = False
+        # Installation access is a separate execution gate.  Preserve the
+        # administrator's persisted policy so reinstall/unsuspend can restore
+        # it without turning an explicit OFF into an implicit setting change.
         value.installed = False
 
 

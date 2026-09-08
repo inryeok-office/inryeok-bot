@@ -339,7 +339,7 @@ def test_superadmin_login_matching_is_case_insensitive_and_fail_closed() -> None
 
 
 @pytest.mark.asyncio
-async def test_admin_lists_only_allowed_accounts(app_client) -> None:
+async def test_admin_lists_all_installations_not_organization_allowlist(app_client) -> None:
     client, factory = app_client
     settings = Settings(
         environment="development",
@@ -364,4 +364,4 @@ async def test_admin_lists_only_allowed_accounts(app_client) -> None:
     response = await client.get("/admin/repositories")
     assert response.status_code == 200
     assert "acme/visible" in response.text
-    assert "outside-org/hidden" not in response.text
+    assert "outside-org/hidden" in response.text

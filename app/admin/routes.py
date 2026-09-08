@@ -30,14 +30,15 @@ templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 
 def _account_filter(column: Any, settings: Settings) -> Any:
-    if settings.environment == "development" and settings.allow_unlisted_github_accounts:
-        return True
-    return func.lower(column).in_(settings.allowed_github_account_set)
+    # The signed GitHub App installation is the tenant boundary.  Global
+    # administrators may inspect every installation; organization login names
+    # are metadata, not an authorization allowlist.
+    del column, settings
+    return True
 
 
 def _ensure_allowed(repository_owner: str, settings: Settings) -> None:
-    if not settings.github_account_allowed(repository_owner):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "repository not found")
+    del repository_owner, settings
 
 
 def _context(

@@ -82,14 +82,11 @@ def claim_statement() -> Select[tuple[ReviewJob]]:
                     GlobalReviewSettings.processing_paused.is_(True),
                 )
             ),
-            or_(
-                ~exists(
-                    select(RepositorySettings.id).where(
-                        repository_match,
-                    )
-                ),
-                repository_eligible,
-            ),
+            # A pending job without a synchronized repository row is never
+            # claimable.  Treating a missing row as eligible bypasses the
+            # installation/access trust boundary after a partial webhook or
+            # database restore.
+            repository_eligible,
         )
         .order_by(ReviewJob.created_at, ReviewJob.id)
         .with_for_update(skip_locked=True)

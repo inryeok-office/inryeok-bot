@@ -41,6 +41,11 @@ async def test_claim_order_and_stale_recovery(app_client):
     async with factory() as session:
         session.add_all(
             [
+                RepositorySettings(
+                    installation_id=1,
+                    repository_owner="o",
+                    repository_name="r",
+                ),
                 ReviewJob(
                     delivery_id="one",
                     installation_id=1,

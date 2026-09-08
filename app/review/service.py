@@ -143,6 +143,7 @@ class ReviewService:
                         ReviewJob.repository_owner == job.repository_owner,
                         ReviewJob.repository_name == job.repository_name,
                         ReviewJob.pull_request_number == job.pull_request_number,
+                        ReviewJob.head_sha == job.head_sha,
                     )
                 )
             ).all()

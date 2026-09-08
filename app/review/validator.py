@@ -159,7 +159,7 @@ def validate_findings_with_diagnostics(
             reject("MISSING_STRUCTURED_EVIDENCE")
             continue
         if finding.scope == FindingScope.LINE:
-            if finding.path is None or finding.line is None:
+            if finding.path is None or finding.line is None or finding.side != "RIGHT":
                 reject("INVALID_LOCATION")
                 continue
             try:
