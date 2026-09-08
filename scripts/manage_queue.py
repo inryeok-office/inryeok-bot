@@ -167,8 +167,11 @@ async def activate_repositories(names: list[str]) -> None:
                 actor_login="operations",
                 action="REPOSITORY_POLICY",
                 target_type="repositories",
-                target_id=",".join(sorted(changed)),
-                summary="enabled explicit repositories; automatic review enabled",
+                target_id=(",".join(sorted(changed)))[:128],
+                summary=(
+                    f"enabled {len(changed)} explicitly named repositories; "
+                    "automatic review enabled"
+                ),
             )
         )
         await session.commit()
