@@ -183,6 +183,7 @@ class GlobalReviewSettings(Base):
     command_review_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     language: Mapped[str] = mapped_column(String(8), default=ReviewLanguage.KO.value)
     review_profile: Mapped[str] = mapped_column(String(32), default=ReviewProfile.BALANCED.value)
+    profile_defaults_inherited: Mapped[bool] = mapped_column(Boolean, default=True)
     model: Mapped[str | None] = mapped_column(String(128))
     reasoning_effort: Mapped[str] = mapped_column(String(16), default="medium")
     max_findings: Mapped[int] = mapped_column(Integer, default=10)

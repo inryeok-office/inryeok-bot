@@ -23,7 +23,7 @@ from app.jobs.models import (
 )
 from app.jobs.repository import JobRepository
 from app.review.domains import PROMPT_VERSION, effective_domains
-from app.review.settings import resolve, validate_choice, validate_paths
+from app.review.settings import PROFILE_DEFAULTS, resolve, validate_choice, validate_paths
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -425,6 +425,13 @@ async def update_global_settings(
     )
     value.synchronize_debounce_seconds = synchronize_debounce_seconds
     value.command_cooldown_seconds = command_cooldown_seconds
+    profile_default = PROFILE_DEFAULTS[review_profile]
+    value.profile_defaults_inherited = (
+        minimum_confidence == profile_default.minimum_confidence
+        and minimum_severity.upper() == profile_default.minimum_severity
+        and max_findings == profile_default.max_findings
+        and include_low_severity == profile_default.include_low_severity
+    )
     session.add(
         AdminAuditLog(
             actor_login=principal.github_login,

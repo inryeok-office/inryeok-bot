@@ -131,10 +131,14 @@ def resolve(
         profile_defaults_inherited
         if profile_defaults_inherited is not None
         else (
-            global_settings.minimum_confidence in (None, 0.9)
-            and (global_settings.minimum_severity or "MEDIUM").upper() == "MEDIUM"
-            and (global_settings.max_findings or 10) == 10
-            and not (global_settings.include_low_severity or False)
+            getattr(global_settings, "profile_defaults_inherited", None)
+            if getattr(global_settings, "profile_defaults_inherited", None) is not None
+            else (
+                global_settings.minimum_confidence in (None, 0.9)
+                and (global_settings.minimum_severity or "MEDIUM").upper() == "MEDIUM"
+                and (global_settings.max_findings or 10) == 10
+                and not (global_settings.include_low_severity or False)
+            )
         )
     )
 
