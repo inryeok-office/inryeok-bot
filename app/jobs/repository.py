@@ -19,11 +19,63 @@ class QueueCapacityError(RuntimeError):
 
 
 def claim_statement() -> Select[tuple[ReviewJob]]:
+    repository_match = (
+        (RepositorySettings.installation_id == ReviewJob.installation_id)
+        & (RepositorySettings.repository_owner == ReviewJob.repository_owner)
+        & (RepositorySettings.repository_name == ReviewJob.repository_name)
+    )
+    global_enabled = ~exists(
+        select(GlobalReviewSettings.id).where(
+            GlobalReviewSettings.id == 1,
+            GlobalReviewSettings.enabled.is_(False),
+        )
+    )
+    repository_eligible = exists(
+        select(RepositorySettings.id).where(
+            repository_match,
+            RepositorySettings.installed.is_(True),
+            RepositorySettings.enabled.is_(True),
+            (
+                RepositorySettings.override_enabled.is_(None)
+                | RepositorySettings.override_enabled.is_(True)
+            ),
+            # Nullable overrides are explicit policy; NULL inherits the
+            # corresponding global setting.  Materialized repository flags
+            # remain an additional safety gate for legacy rows.
+            (
+                (ReviewJob.trigger_type == TriggerType.AUTO)
+                & RepositorySettings.auto_review.is_(True)
+                & ~exists(
+                    select(GlobalReviewSettings.id).where(
+                        GlobalReviewSettings.id == 1,
+                        GlobalReviewSettings.auto_review_enabled.is_(False),
+                    )
+                )
+                & (
+                    RepositorySettings.override_auto_review_enabled.is_(None)
+                    | RepositorySettings.override_auto_review_enabled.is_(True)
+                )
+                |
+                (ReviewJob.trigger_type == TriggerType.COMMAND)
+                & (
+                    RepositorySettings.override_command_review_enabled.is_(None)
+                    | RepositorySettings.override_command_review_enabled.is_(True)
+                )
+                & ~exists(
+                    select(GlobalReviewSettings.id).where(
+                        GlobalReviewSettings.id == 1,
+                        GlobalReviewSettings.command_review_enabled.is_(False),
+                    )
+                )
+            ),
+        )
+    )
     return (
         select(ReviewJob)
         .where(
             ReviewJob.status == JobStatus.PENDING,
             (ReviewJob.not_before.is_(None) | (ReviewJob.not_before <= datetime.now(UTC))),
+            global_enabled,
             ~exists(
                 select(GlobalReviewSettings.id).where(
                     GlobalReviewSettings.id == 1,
@@ -33,20 +85,10 @@ def claim_statement() -> Select[tuple[ReviewJob]]:
             or_(
                 ~exists(
                     select(RepositorySettings.id).where(
-                        RepositorySettings.installation_id == ReviewJob.installation_id,
-                        RepositorySettings.repository_owner == ReviewJob.repository_owner,
-                        RepositorySettings.repository_name == ReviewJob.repository_name,
+                        repository_match,
                     )
                 ),
-                exists(
-                    select(RepositorySettings.id).where(
-                        RepositorySettings.installation_id == ReviewJob.installation_id,
-                        RepositorySettings.repository_owner == ReviewJob.repository_owner,
-                        RepositorySettings.repository_name == ReviewJob.repository_name,
-                        RepositorySettings.enabled.is_(True),
-                        RepositorySettings.installed.is_(True),
-                    )
-                ),
+                repository_eligible,
             ),
         )
         .order_by(ReviewJob.created_at, ReviewJob.id)
