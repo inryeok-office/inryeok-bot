@@ -121,6 +121,27 @@ async def resume() -> None:
         print(json.dumps({"processing_paused": False}))
 
 
+async def pause() -> None:
+    """Pause claiming after an explicitly audited maintenance pause window."""
+    async with get_session_factory()() as session:
+        global_settings = await session.get(GlobalReviewSettings, 1)
+        if global_settings is None:
+            global_settings = GlobalReviewSettings(id=1)
+            session.add(global_settings)
+        global_settings.processing_paused = True
+        session.add(
+            AdminAuditLog(
+                actor_login="operations",
+                action="QUEUE_POLICY",
+                target_type="global_settings",
+                target_id="1",
+                summary="processing_paused=true; maintenance pause",
+            )
+        )
+        await session.commit()
+        print(json.dumps({"processing_paused": True}))
+
+
 async def activate_repositories(names: list[str]) -> None:
     """Enable only explicitly named repositories and audit the change."""
     requested = {name.casefold() for name in names}
@@ -154,6 +175,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("audit")
     sub.add_parser("resume")
+    sub.add_parser("pause")
     policy = sub.add_parser("pause-test")
     policy.add_argument("owner")
     policy.add_argument("name")
@@ -166,6 +188,8 @@ def main() -> None:
         asyncio.run(set_policy(args.owner, args.name))
     elif args.command == "activate-repositories":
         asyncio.run(activate_repositories(args.repositories))
+    elif args.command == "pause":
+        asyncio.run(pause())
     else:
         asyncio.run(resume())
 
