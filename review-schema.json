@@ -11,7 +11,7 @@
   "$defs": {
     "findingCommon": {
       "type": "object", "additionalProperties": false,
-      "required": ["scope", "category", "severity", "confidence", "title", "body", "condition", "impact", "evidence", "suggested_fix", "domain"],
+      "required": ["scope", "category", "severity", "confidence", "title", "body"],
       "properties": {
         "scope": {"enum": ["LINE", "FILE", "PR"]},
         "path": {"type": ["string", "null"], "maxLength": 1024},

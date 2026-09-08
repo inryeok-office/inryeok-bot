@@ -219,7 +219,8 @@ async def test_executor_uses_dedicated_workspace_root(monkeypatch, tmp_path) -> 
 
 
 @pytest.mark.asyncio
-async def test_executor_rejects_duplicate_execution_id(monkeypatch) -> None:
+async def test_executor_rejects_duplicate_execution_id(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CODEX_EXECUTION_STATE_DIR", str(tmp_path / "executions"))
     monkeypatch.setattr("app.codex.executor._seen_execution_ids", set())
     request = ReviewRequest(
         archive=base64.b64encode(_archive()).decode(),
@@ -236,3 +237,47 @@ async def test_executor_rejects_duplicate_execution_id(monkeypatch) -> None:
 
     assert first == {"summary": "ok", "findings": []}
     assert second.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_executor_durable_result_survives_process_guard_reset(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CODEX_EXECUTION_STATE_DIR", str(tmp_path / "executions"))
+    monkeypatch.setattr("app.codex.executor._seen_execution_ids", set())
+    request = ReviewRequest(
+        archive=base64.b64encode(_archive()).decode(),
+        prompt="durable review",
+        execution_id="durable-execution-123",
+    )
+    calls = 0
+
+    async def fake_run(_: ReviewRequest) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"summary": "ok", "findings": []}
+
+    monkeypatch.setattr("app.codex.executor._run_review", fake_run)
+    assert await review(request) == {"summary": "ok", "findings": []}
+    monkeypatch.setattr("app.codex.executor._seen_execution_ids", set())
+    assert await review(request) == {"summary": "ok", "findings": []}
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_executor_rejects_execution_id_fingerprint_conflict(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CODEX_EXECUTION_STATE_DIR", str(tmp_path / "executions"))
+    monkeypatch.setattr("app.codex.executor._seen_execution_ids", set())
+    first = ReviewRequest(
+        archive=base64.b64encode(_archive()).decode(),
+        prompt="first",
+        execution_id="conflict-execution-123",
+    )
+    second = first.model_copy(update={"prompt": "different"})
+
+    async def fake_run(_: ReviewRequest) -> dict[str, object]:
+        return {"summary": "ok", "findings": []}
+
+    monkeypatch.setattr("app.codex.executor._run_review", fake_run)
+    await review(first)
+    monkeypatch.setattr("app.codex.executor._seen_execution_ids", set())
+    result = await review(second)
+    assert result.status_code == 409
