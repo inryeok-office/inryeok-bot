@@ -28,15 +28,38 @@ class Category(StrEnum):
     SIMPLIFICATION = "SIMPLIFICATION"
 
 
+class FindingScope(StrEnum):
+    """Where a finding applies.
+
+    LINE is the legacy/default representation.  FILE and PR are accepted by
+    the wire model so newer prompts can represent findings that cannot be
+    honestly attached to one added line; publication policy decides whether
+    they are renderable.
+    """
+
+    LINE = "LINE"
+    FILE = "FILE"
+    PR = "PR"
+
+
 class Finding(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    path: str = Field(min_length=1, max_length=1024)
-    line: int = Field(ge=1)
+    scope: FindingScope = FindingScope.LINE
+    path: str | None = Field(default=None, min_length=1, max_length=1024)
+    line: int | None = Field(default=None, ge=1)
     category: Category
     severity: Severity
     confidence: float = Field(ge=0, le=1)
     title: str = Field(min_length=1, max_length=300)
     body: str = Field(min_length=1, max_length=4000)
+    # Optional for backwards compatibility with outputs produced before the
+    # structured-evidence contract.  New prompts can provide concise,
+    # redaction-safe evidence without embedding source files.
+    condition: str | None = Field(default=None, max_length=1000)
+    impact: str | None = Field(default=None, max_length=1000)
+    evidence: str | None = Field(default=None, max_length=1200)
+    suggested_fix: str | None = Field(default=None, max_length=1200)
+    domain: str | None = Field(default=None, max_length=64)
 
 
 class ReviewOutput(BaseModel):

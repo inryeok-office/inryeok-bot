@@ -1,7 +1,8 @@
+from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from app.codex.schemas import Category, Finding, Severity
+from app.codex.schemas import Category, Finding, FindingScope, Severity
 from app.review.deduplicator import fingerprint
 from app.review.diff import ChangedFile, normalize_path
 
@@ -17,6 +18,7 @@ class FindingValidationResult:
     severity_count: int
     evidence_count: int
     deduplicated_count: int
+    rejection_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def published_count(self) -> int:
@@ -93,6 +95,13 @@ def _has_policy_evidence(finding: Finding) -> bool:
     return True
 
 
+def _structured_evidence_is_complete(finding: Finding) -> bool:
+    """Require context fields for non-line findings without breaking legacy LINE output."""
+    if finding.scope == FindingScope.LINE:
+        return True
+    return bool(finding.condition and finding.impact and finding.evidence)
+
+
 def validate_findings(
     findings: Iterable[Finding],
     changed: dict[str, ChangedFile],
@@ -131,51 +140,81 @@ def validate_findings_with_diagnostics(
     severity_count = 0
     evidence_count = 0
     deduplicated_count = 0
+    rejected: Counter[str] = Counter()
+
+    def reject(reason: str) -> None:
+        rejected[reason] += 1
+
     minimum_order = ORDER[Severity(minimum_severity)]
     for finding in findings:
+        if finding.scope != FindingScope.LINE:
+            # Publisher support for FILE/PR is intentionally explicit. Do not
+            # silently attach a file/PR claim to an arbitrary line.
+            if not _structured_evidence_is_complete(finding):
+                reject("MISSING_STRUCTURED_EVIDENCE")
+            else:
+                reject("UNSUPPORTED_SCOPE")
+            continue
+        if finding.path is None or finding.line is None:
+            reject("INVALID_LOCATION")
+            continue
         try:
             finding.path = normalize_path(finding.path)
         except ValueError:
+            reject("INVALID_PATH")
             continue
         file = changed.get(finding.path)
         mark = fingerprint(finding)
         if not file:
+            reject("FILE_NOT_CHANGED")
             continue
         changed_file_count += 1
         if finding.line not in file.added_lines:
+            reject("LINE_NOT_RIGHT_SIDE")
             continue
         changed_line_count += 1
         if finding.confidence < min_confidence:
+            reject("BELOW_CONFIDENCE")
             continue
         confidence_count += 1
         if finding.severity == Severity.LOW and not include_low:
+            reject("LOW_DISABLED")
             continue
         if ORDER[finding.severity] < minimum_order:
+            reject("BELOW_SEVERITY")
             continue
         if enabled_categories and finding.category.value not in enabled_categories:
+            reject("UNKNOWN_CATEGORY")
             continue
         if review_profile == "CONSERVATIVE" and finding.category in {
             Category.PERFORMANCE,
             Category.SIMPLIFICATION,
             Category.TESTING,
         }:
+            reject("PROFILE_EXCLUDED")
             continue
         severity_count += 1
         if not _has_policy_evidence(finding):
+            reject("EVIDENCE_NOT_SUPPORTED")
             continue
         evidence_count += 1
         if mark in existing or mark in seen:
+            reject("DUPLICATE")
             continue
         seen.add(mark)
         accepted.append(finding)
         deduplicated_count += 1
     accepted.sort(key=lambda item: (-ORDER[item.severity], -item.confidence, item.path, item.line))
+    limited = accepted[:max_findings]
+    if len(accepted) > len(limited):
+        rejected["MAX_FINDINGS_EXCEEDED"] += len(accepted) - len(limited)
     return FindingValidationResult(
-        findings=accepted[:max_findings],
+        findings=limited,
         changed_file_count=changed_file_count,
         changed_line_count=changed_line_count,
         confidence_count=confidence_count,
         severity_count=severity_count,
         evidence_count=evidence_count,
         deduplicated_count=deduplicated_count,
+        rejection_counts=dict(rejected),
     )

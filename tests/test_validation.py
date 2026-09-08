@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.codex.schemas import Category, Finding, ReviewOutput, Severity
+from app.codex.schemas import Category, Finding, FindingScope, ReviewOutput, Severity
 from app.review.deduplicator import fingerprint
 from app.review.diff import ChangedFile
 from app.review.validator import validate_findings, validate_findings_with_diagnostics
@@ -102,3 +102,47 @@ def test_validation_diagnostics_explain_each_filter_stage():
     assert result.evidence_count == 1
     assert result.deduplicated_count == 1
     assert result.published_count == 1
+    assert result.rejection_counts == {
+        "LINE_NOT_RIGHT_SIDE": 1,
+        "BELOW_CONFIDENCE": 1,
+        "LOW_DISABLED": 1,
+    }
+
+
+def test_structured_finding_fields_are_backward_compatible():
+    item = finding(
+        scope=FindingScope.LINE,
+        condition="when the value is absent",
+        impact="the request fails",
+        evidence="account.owner",
+        suggested_fix="check for null before dereference",
+        domain="BACKEND",
+    )
+    assert item.scope == FindingScope.LINE
+    assert item.evidence == "account.owner"
+
+
+def test_file_and_pr_findings_are_not_attached_to_an_arbitrary_line():
+    changed = {"app.py": ChangedFile("app.py", frozenset({2}))}
+    result = validate_findings_with_diagnostics(
+        [
+            finding(scope=FindingScope.FILE, path="app.py", line=None),
+            finding(
+                scope=FindingScope.PR,
+                path=None,
+                line=None,
+                condition="two changed files interact",
+                impact="the API breaks",
+                evidence="caller and callee use different contracts",
+            ),
+        ],
+        changed,
+        0.8,
+        True,
+        10,
+    )
+    assert result.findings == []
+    assert result.rejection_counts == {
+        "MISSING_STRUCTURED_EVIDENCE": 1,
+        "UNSUPPORTED_SCOPE": 1,
+    }
