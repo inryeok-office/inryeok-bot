@@ -48,4 +48,4 @@ async def test_pause_test_does_not_rewrite_repository_policy(
             select(AdminAuditLog).where(AdminAuditLog.action == "pause_processing")
         )
         assert audit is not None
-            assert "informational" in audit.summary
+        assert "informational" in audit.summary
