@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,13 +33,24 @@ async def get_github(settings: Settings = Depends(get_settings)) -> GitHubClient
 
 
 async def _repository_settings(
-    session: AsyncSession, installation_id: int, owner: str, name: str, settings: Settings
+    session: AsyncSession,
+    installation_id: int,
+    owner: str,
+    name: str,
+    settings: Settings,
+    *,
+    mark_installed: bool = False,
 ) -> RepositorySettings:
+    # GitHub owner/repository names are case-insensitive.  Canonicalizing at
+    # the trust-boundary prevents a webhook using ``AcMe/Repo`` from creating
+    # a second policy row or an unclaimable Job next to ``acme/repo``.
+    owner = owner.strip().casefold()
+    name = name.strip().casefold()
     value = await session.scalar(
         select(RepositorySettings).where(
             RepositorySettings.installation_id == installation_id,
-            RepositorySettings.repository_owner == owner,
-            RepositorySettings.repository_name == name,
+            func.lower(RepositorySettings.repository_owner) == owner,
+            func.lower(RepositorySettings.repository_name) == name,
         )
     )
     if value is None:
@@ -55,8 +66,13 @@ async def _repository_settings(
         )
         session.add(value)
         await session.flush()
-    else:
+    elif mark_installed:
+        # Only installation synchronization can restore repository access.
+        # A later PR/comment webhook must never resurrect a repository removed
+        # from the App installation.
         value.installed = True
+    value.repository_owner = owner
+    value.repository_name = name
     return value
 
 
@@ -160,17 +176,19 @@ async def github_webhook(
                     removed_setting = await session.scalar(
                         select(RepositorySettings).where(
                             RepositorySettings.installation_id == installation_id,
-                            RepositorySettings.repository_owner == owner,
-                            RepositorySettings.repository_name == name,
+                            func.lower(RepositorySettings.repository_owner) == owner.casefold(),
+                            func.lower(RepositorySettings.repository_name) == name.casefold(),
                         )
                     )
                     if removed_setting:
-                        removed_setting.enabled = False
+                        # Access state is not administrator policy.  Keep the
+                        # stored/effective policy intact for reinstall while
+                        # installed=false blocks execution.
                         removed_setting.installed = False
             for repository in repositories:
                 owner, name = str(repository["full_name"]).split("/", 1)
                 repository_setting = await _repository_settings(
-                    session, installation_id, owner, name, settings
+                    session, installation_id, owner, name, settings, mark_installed=True
                 )
                 # Installation sync supplies defaults only.  Nullable
                 # overrides are the admin's explicit intent and must win over
@@ -213,8 +231,8 @@ async def github_webhook(
                 await session.commit()
                 return {"accepted": True, "ignored": "draft"}
             installation_id = pr_event.installation.id
-            owner = pr_event.repository.owner.login
-            repository_name = pr_event.repository.name
+            owner = repo_settings.repository_owner
+            repository_name = repo_settings.repository_name
             pr_number = pr_event.pull_request.number
             base_sha = pr_event.pull_request.base.sha
             head_sha = pr_event.pull_request.head.sha
@@ -264,8 +282,8 @@ async def github_webhook(
             if raw_pr.get("draft") and repo_settings.ignore_draft:
                 return {"accepted": True, "ignored": "draft"}
             installation_id = comment_event.installation.id
-            owner = comment_event.repository.owner.login
-            repository_name = comment_event.repository.name
+            owner = repo_settings.repository_owner
+            repository_name = repo_settings.repository_name
             pr_number = comment_event.issue.number
             base_sha = str(raw_pr["base"]["sha"])
             head_sha = str(raw_pr["head"]["sha"])

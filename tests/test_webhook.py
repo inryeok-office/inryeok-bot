@@ -272,7 +272,60 @@ async def test_installation_repository_removed_is_disabled(app_client):
         repository = await session.scalar(
             select(RepositorySettings).where(RepositorySettings.installation_id == 11)
         )
-        assert repository and not repository.enabled and not repository.installed
+        # Removing a repository from the installation is access state, not an
+        # administrator policy change.  Keep the inherited policy for a later
+        # reinstall while installed=false blocks execution.
+        assert repository and repository.enabled and repository.auto_review
+        assert not repository.installed
+
+
+@pytest.mark.asyncio
+async def test_removed_repository_cannot_be_resurrected_by_late_pr_webhook(app_client, pr_payload):
+    client, factory = app_client
+    async with factory() as session:
+        session.add(
+            RepositorySettings(
+                installation_id=1,
+                repository_owner="acme",
+                repository_name="repo",
+                installed=False,
+                enabled=True,
+                auto_review=True,
+            )
+        )
+        await session.commit()
+
+    body, headers = signed(pr_payload, delivery="late-pr-after-removal")
+    response = await client.post("/webhooks/github", content=body, headers=headers)
+    assert response.json()["ignored"] == "repository_disabled"
+    async with factory() as session:
+        repository = await session.scalar(
+            select(RepositorySettings).where(RepositorySettings.installation_id == 1)
+        )
+        assert repository is not None and repository.installed is False
+        assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 0
+
+
+@pytest.mark.asyncio
+async def test_repository_name_case_does_not_create_second_policy_row(app_client, pr_payload):
+    client, factory = app_client
+    async with factory() as session:
+        session.add(
+            RepositorySettings(
+                installation_id=1,
+                repository_owner="acme",
+                repository_name="repo",
+                installed=True,
+            )
+        )
+        await session.commit()
+    pr_payload["repository"]["owner"]["login"] = "AcMe"
+    pr_payload["repository"]["name"] = "Repo"
+    body, headers = signed(pr_payload, delivery="case-normalized-repo")
+    response = await client.post("/webhooks/github", content=body, headers=headers)
+    assert response.json()["created"] is True
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(RepositorySettings)) == 1
 
 
 @pytest.mark.asyncio
