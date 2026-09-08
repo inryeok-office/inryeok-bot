@@ -293,6 +293,18 @@ class WebhookDelivery(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     delivery_id: Mapped[str] = mapped_column(String(100), unique=True)
     event_name: Mapped[str] = mapped_column(String(100))
+    # Delivery metadata is deliberately bounded and never contains the
+    # original GitHub payload, signature, or credentials.
+    status: Mapped[str] = mapped_column(String(24), default="RECEIVED", index=True)
+    safe_reason: Mapped[str | None] = mapped_column(String(100))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=1)
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
+    installation_id: Mapped[int | None] = mapped_column(BigInteger)
+    repository_owner: Mapped[str | None] = mapped_column(String(255))
+    repository_name: Mapped[str | None] = mapped_column(String(255))
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

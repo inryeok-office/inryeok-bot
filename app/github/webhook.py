@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import ValidationError
@@ -26,6 +27,11 @@ from app.review.settings import EffectiveReviewSettings, resolve
 router = APIRouter()
 logger = logging.getLogger(__name__)
 SUPPORTED_PR_ACTIONS = {"opened", "reopened", "ready_for_review", "synchronize"}
+DELIVERY_PROCESSING = "PROCESSING"
+DELIVERY_PROCESSED = "PROCESSED"
+DELIVERY_IGNORED = "IGNORED"
+DELIVERY_FAILED_RETRYABLE = "FAILED_RETRYABLE"
+DELIVERY_FAILED_FINAL = "FAILED_FINAL"
 
 
 async def get_github(settings: Settings = Depends(get_settings)) -> GitHubClient:
@@ -104,14 +110,59 @@ def _trigger_enabled(action: str, effective: EffectiveReviewSettings) -> bool:
     return bool(getattr(effective, f"review_on_{action}"))
 
 
-async def _record_delivery(session: AsyncSession, delivery_id: str, event_name: str) -> bool:
-    session.add(WebhookDelivery(delivery_id=delivery_id, event_name=event_name))
+async def _record_delivery(
+    session: AsyncSession, delivery_id: str, event_name: str
+) -> tuple[WebhookDelivery | None, bool]:
+    """Atomically reserve a delivery and mark it PROCESSING.
+
+    The reservation is committed before handler work so concurrent GitHub
+    redeliveries cannot both enqueue a Job. Unlike the old boolean marker,
+    retryable failures remain visible and can be safely retried.
+    """
+    correlation_id = uuid4().hex
+    delivery = WebhookDelivery(
+        delivery_id=delivery_id,
+        event_name=event_name,
+        status=DELIVERY_PROCESSING,
+        attempt_count=1,
+        correlation_id=correlation_id,
+        processing_started_at=datetime.now(UTC),
+    )
+    session.add(delivery)
     try:
         await session.commit()
-        return True
+        await session.refresh(delivery)
+        return delivery, True
     except IntegrityError:
         await session.rollback()
-        return False
+        existing = await session.scalar(
+            select(WebhookDelivery).where(WebhookDelivery.delivery_id == delivery_id)
+        )
+        if existing is None or existing.status != DELIVERY_FAILED_RETRYABLE:
+            return existing, False
+        existing.status = DELIVERY_PROCESSING
+        existing.attempt_count += 1
+        existing.safe_reason = None
+        existing.processing_started_at = datetime.now(UTC)
+        existing.completed_at = None
+        await session.commit()
+        return existing, True
+
+
+async def _finish_delivery(
+    session: AsyncSession,
+    delivery: WebhookDelivery | None,
+    state: str,
+    reason: str,
+    response_status: int = 200,
+) -> None:
+    if delivery is None:
+        return
+    delivery.status = state
+    delivery.safe_reason = reason[:100]
+    delivery.response_status = response_status
+    delivery.completed_at = datetime.now(UTC)
+    await session.commit()
 
 
 @router.post("/webhooks/github")
@@ -149,12 +200,30 @@ async def github_webhook(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid webhook signature")
     if not x_github_event or not x_github_delivery:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "missing GitHub webhook headers")
-    if not await _record_delivery(session, x_github_delivery, x_github_event):
+    delivery, should_process = await _record_delivery(session, x_github_delivery, x_github_event)
+    if not should_process:
         return {"accepted": True, "ignored": "duplicate_delivery"}
+
+    async def ignored(reason: str) -> dict[str, object]:
+        await _finish_delivery(session, delivery, DELIVERY_IGNORED, reason)
+        return {"accepted": True, "ignored": reason}
+
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
+        await _finish_delivery(session, delivery, DELIVERY_FAILED_FINAL, "INVALID_PAYLOAD", 400)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid webhook payload") from exc
+    if delivery is not None and isinstance(payload, dict):
+        installation = payload.get("installation")
+        if isinstance(installation, dict) and isinstance(installation.get("id"), int):
+            delivery.installation_id = installation["id"]
+        repository = payload.get("repository")
+        if isinstance(repository, dict):
+            owner = repository.get("owner")
+            if isinstance(owner, dict) and isinstance(owner.get("login"), str):
+                delivery.repository_owner = owner["login"].strip().casefold()
+            if isinstance(repository.get("name"), str):
+                delivery.repository_name = repository["name"].strip().casefold()
     if x_github_event in {"installation", "installation_repositories"}:
         try:
             installation_id = int(payload["installation"]["id"])
@@ -166,10 +235,10 @@ async def github_webhook(
                 elif action in {"created", "unsuspend"}:
                     repositories = await github.list_installation_repositories(installation_id)
                 else:
-                    return {"accepted": True, "ignored": "unsupported_action"}
+                    return await ignored("unsupported_action")
             else:
                 if action not in {"added", "removed"}:
-                    return {"accepted": True, "ignored": "unsupported_action"}
+                    return await ignored("unsupported_action")
                 repositories = list(payload.get("repositories_added", []))
                 for removed in list(payload.get("repositories_removed", [])):
                     owner, name = str(removed["full_name"]).split("/", 1)
@@ -199,20 +268,24 @@ async def github_webhook(
                     repository_setting.auto_review = True
                 repository_setting.installed = True
             await session.commit()
+            await _finish_delivery(session, delivery, DELIVERY_PROCESSED, "INSTALLATION_SYNCED")
             return {"accepted": True, "synced": True}
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
+            await _finish_delivery(
+                session, delivery, DELIVERY_FAILED_FINAL, "INVALID_INSTALLATION", 400
+            )
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "invalid installation payload"
             ) from exc
     if x_github_event not in {"pull_request", "issue_comment"}:
-        return {"accepted": True, "ignored": "unsupported_event"}
+        return await ignored("unsupported_event")
     try:
         if x_github_event == "pull_request":
             pr_event = PullRequestEvent.model_validate(payload)
             if pr_event.action not in SUPPORTED_PR_ACTIONS:
-                return {"accepted": True, "ignored": "unsupported_action"}
+                return await ignored("unsupported_action")
             if pr_event.sender.login.lower() == settings.github_bot_login.lower():
-                return {"accepted": True, "ignored": "bot_event"}
+                return await ignored("bot_event")
             repo_settings = await _repository_settings(
                 session,
                 pr_event.installation.id,
@@ -222,14 +295,11 @@ async def github_webhook(
             )
             effective = await _effective_settings(session, repo_settings, settings)
             if not effective.enabled or not effective.auto_review_enabled:
-                await session.commit()
-                return {"accepted": True, "ignored": "repository_disabled"}
+                return await ignored("repository_disabled")
             if not _trigger_enabled(pr_event.action, effective):
-                await session.commit()
-                return {"accepted": True, "ignored": "trigger_disabled"}
+                return await ignored("trigger_disabled")
             if pr_event.pull_request.draft and repo_settings.ignore_draft:
-                await session.commit()
-                return {"accepted": True, "ignored": "draft"}
+                return await ignored("draft")
             installation_id = pr_event.installation.id
             owner = repo_settings.repository_owner
             repository_name = repo_settings.repository_name
@@ -246,14 +316,14 @@ async def github_webhook(
         else:
             comment_event = IssueCommentEvent.model_validate(payload)
             if comment_event.action != "created" or comment_event.issue.pull_request is None:
-                return {"accepted": True, "ignored": "not_pr_comment"}
+                return await ignored("not_pr_comment")
             if (
                 comment_event.sender.login.lower() == settings.github_bot_login.lower()
                 or comment_event.comment.user.login.lower() == settings.github_bot_login.lower()
             ):
-                return {"accepted": True, "ignored": "bot_event"}
+                return await ignored("bot_event")
             if not is_review_command(comment_event.comment.body, settings.github_bot_login):
-                return {"accepted": True, "ignored": "not_review_command"}
+                return await ignored("not_review_command")
             permission = await github.get_collaborator_permission(
                 comment_event.installation.id,
                 comment_event.repository.owner.login,
@@ -261,7 +331,7 @@ async def github_webhook(
                 comment_event.comment.user.login,
             )
             if permission not in {"admin", "maintain", "write"}:
-                return {"accepted": True, "ignored": "insufficient_permission"}
+                return await ignored("insufficient_permission")
             repo_settings = await _repository_settings(
                 session,
                 comment_event.installation.id,
@@ -271,8 +341,7 @@ async def github_webhook(
             )
             effective = await _effective_settings(session, repo_settings, settings)
             if not effective.enabled or not effective.command_review_enabled:
-                await session.commit()
-                return {"accepted": True, "ignored": "repository_disabled"}
+                return await ignored("repository_disabled")
             raw_pr = await github.get_pull_request(
                 comment_event.installation.id,
                 comment_event.repository.owner.login,
@@ -280,7 +349,7 @@ async def github_webhook(
                 comment_event.issue.number,
             )
             if raw_pr.get("draft") and repo_settings.ignore_draft:
-                return {"accepted": True, "ignored": "draft"}
+                return await ignored("draft")
             installation_id = comment_event.installation.id
             owner = repo_settings.repository_owner
             repository_name = repo_settings.repository_name
@@ -308,8 +377,7 @@ async def github_webhook(
                     .limit(1)
                 )
                 if recent is not None:
-                    await session.commit()
-                    return {"accepted": True, "ignored": "command_cooldown"}
+                    return await ignored("command_cooldown")
         try:
             job, created = await JobRepository(session).enqueue(
                 max_pending_jobs=settings.max_pending_jobs,
@@ -327,6 +395,9 @@ async def github_webhook(
             )
         except QueueCapacityError:
             await session.rollback()
+            await _finish_delivery(
+                session, delivery, DELIVERY_FAILED_RETRYABLE, "QUEUE_CAPACITY", 200
+            )
             return {"accepted": True, "created": False, "ignored": "queue_capacity"}
         if created and job is not None:
             try:
@@ -341,6 +412,13 @@ async def github_webhook(
                     )
             except Exception:
                 logger.warning("Unable to add the review-start reaction for job %s", job.id)
+        await _finish_delivery(session, delivery, DELIVERY_PROCESSED, "JOB_ENQUEUED")
         return {"accepted": True, "created": created, "job_id": job.id if job else None}
     except (ValidationError, json.JSONDecodeError, KeyError) as exc:
+        await _finish_delivery(session, delivery, DELIVERY_FAILED_FINAL, "INVALID_PAYLOAD", 400)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid webhook payload") from exc
+    except Exception:
+        logger.exception("Webhook delivery failed: %s", x_github_delivery)
+        await session.rollback()
+        await _finish_delivery(session, delivery, DELIVERY_FAILED_RETRYABLE, "HANDLER_ERROR", 500)
+        raise

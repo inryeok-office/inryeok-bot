@@ -2,8 +2,14 @@ import pytest
 from conftest import FakeGitHub, signed
 from sqlalchemy import func, select
 
-from app.github.webhook import get_github
-from app.jobs.models import RepositorySettings, ReviewJob
+from app.github.webhook import (
+    DELIVERY_FAILED_RETRYABLE,
+    DELIVERY_PROCESSED,
+    _finish_delivery,
+    _record_delivery,
+    get_github,
+)
+from app.jobs.models import RepositorySettings, ReviewJob, WebhookDelivery
 from app.main import app
 
 
@@ -17,6 +23,31 @@ async def test_valid_signature_enqueues_and_duplicate_is_idempotent(app_client, 
     assert second.status_code == 200 and second.json()["ignored"] == "duplicate_delivery"
     async with factory() as session:
         assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 1
+        delivery = await session.scalar(
+            select(WebhookDelivery).where(WebhookDelivery.delivery_id == "d-1")
+        )
+        assert delivery is not None
+        assert delivery.status == "PROCESSED"
+        assert delivery.safe_reason == "JOB_ENQUEUED"
+
+
+@pytest.mark.asyncio
+async def test_delivery_state_machine_allows_only_retryable_redelivery(app_client):
+    _, factory = app_client
+    async with factory() as session:
+        first, should_process = await _record_delivery(session, "state-machine", "push")
+        assert should_process and first is not None
+        await _finish_delivery(session, first, DELIVERY_FAILED_RETRYABLE, "QUEUE_CAPACITY", 200)
+
+        retried, should_process = await _record_delivery(session, "state-machine", "push")
+        assert should_process and retried is not None
+        assert retried.attempt_count == 2
+        await _finish_delivery(session, retried, DELIVERY_PROCESSED, "JOB_ENQUEUED")
+
+        duplicate, should_process = await _record_delivery(session, "state-machine", "push")
+        assert not should_process and duplicate is not None
+        assert duplicate.status == DELIVERY_PROCESSED
+        assert duplicate.attempt_count == 2
 
 
 @pytest.mark.asyncio
