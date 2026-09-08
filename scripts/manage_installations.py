@@ -19,7 +19,30 @@ async def reconcile(apply: bool) -> None:
     settings = get_settings()
     github = GitHubClient(settings)
     async with get_session_factory()() as session:
+        discovered = await github.list_app_installations()
         installations = list((await session.scalars(select(GitHubInstallation))).all())
+        by_external = {item.github_installation_id: item for item in installations}
+        for item in discovered:
+            external_id = int(item["id"])
+            installation = by_external.get(external_id)
+            account = item.get("account") or {}
+            if installation is None:
+                installation = GitHubInstallation(
+                    github_installation_id=external_id,
+                    account_id=account.get("id"),
+                    account_login=account.get("login"),
+                    account_type=account.get("type"),
+                    status="ACTIVE",
+                    version=1,
+                )
+                installations.append(installation)
+                by_external[external_id] = installation
+                if apply:
+                    session.add(installation)
+            elif apply:
+                installation.account_id = account.get("id")
+                installation.account_login = account.get("login")
+                installation.account_type = account.get("type")
         result = {
             "installations": 0,
             "repositories": 0,
@@ -33,6 +56,8 @@ async def reconcile(apply: bool) -> None:
         for installation in installations:
             result["installations"] += 1
             try:
+                if installation.id is None and apply:
+                    await session.flush()
                 remote = await github.list_installation_repositories(
                     installation.github_installation_id
                 )

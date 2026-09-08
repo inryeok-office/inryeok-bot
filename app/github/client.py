@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 from app.config import Settings
-from app.github.auth import InstallationTokenProvider
+from app.github.auth import InstallationTokenProvider, create_app_jwt
 
 
 class GitHubAPIError(RuntimeError):
@@ -73,6 +73,36 @@ class GitHubClient:
             error.retryable = retryable
             raise error
         raise GitHubAPIError(599, "GITHUB_RETRY_EXHAUSTED")
+
+    async def _app_request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        response = await self.http.request(
+            method,
+            f"{self.settings.github_api_url}{path}",
+            headers={
+                "Authorization": f"Bearer {create_app_jwt(self.settings)}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            **kwargs,
+        )
+        if response.status_code >= 400:
+            raise GitHubAPIError(response.status_code, "GITHUB_APP_API_ERROR")
+        return response
+
+    async def list_app_installations(self) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            data = (
+                await self._app_request(
+                    "GET", "/app/installations", params={"per_page": 100, "page": page}
+                )
+            ).json()
+            values = list(data)
+            result.extend(values)
+            if len(values) < 100:
+                return result
+            page += 1
 
     async def get_pull_request(
         self, installation_id: int, owner: str, repo: str, number: int

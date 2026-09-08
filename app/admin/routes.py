@@ -357,6 +357,7 @@ async def audit_log(
 async def update_global_settings(
     request: Request,
     csrf: str = Form(..., alias="_csrf"),
+    expected_version: int | None = Form(None),
     language: str = Form("ko"),
     review_profile: str = Form("BALANCED"),
     reasoning_effort: str = Form("medium"),
@@ -406,6 +407,12 @@ async def update_global_settings(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     value = await session.get(GlobalReviewSettings, 1) or GlobalReviewSettings(id=1)
     session.add(value)
+    current_version = value.version or 1
+    if expected_version is not None and expected_version != current_version:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "설정이 다른 관리자에 의해 변경되었습니다. 새로고침 후 다시 저장하세요.",
+        )
     form = await request.form() if request is not None else None
 
     def submitted(name: str) -> bool:
@@ -473,6 +480,7 @@ async def update_global_settings(
             and value.max_findings == profile_default.max_findings
             and value.include_low_severity == profile_default.include_low_severity
         )
+    value.version = current_version + 1
     session.add(
         AdminAuditLog(
             actor_login=principal.github_login,
@@ -491,6 +499,7 @@ async def update_repository(
     repository_id: int,
     request: Request,
     csrf: str = Form(..., alias="_csrf"),
+    expected_version: int | None = Form(None),
     enabled: bool = Form(False),
     auto_review: bool = Form(False),
     min_confidence: float | None = Form(None),
@@ -530,6 +539,11 @@ async def update_repository(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "repository not found")
     _ensure_allowed(repository.repository_owner, settings)
     await _require_repository_admin(repository, principal, settings)
+    current_version = repository.version or 1
+    if expected_version is not None and expected_version != current_version:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "저장소 설정이 변경되었습니다. 새로고침 후 다시 저장하세요."
+        )
     # A settings form is allowed to update one section at a time.  In
     # particular, unchecked checkboxes are absent from an HTML form; treating
     # an absent field as false silently overwrites unrelated settings.
@@ -627,6 +641,7 @@ async def update_repository(
             effective_domains("MANUAL", repository.override_manual_review_domains, None)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    repository.version = current_version + 1
     session.add(
         AdminAuditLog(
             actor_login=principal.github_login,
