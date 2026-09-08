@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Any
 
@@ -204,10 +205,29 @@ async def job_detail(
     review_run = await session.scalar(
         select(ReviewRun).where(ReviewRun.job_id == job.id).order_by(ReviewRun.id.desc())
     )
+    rejection_counts: dict[str, int] = {}
+    if review_run and review_run.rejection_counts:
+        try:
+            parsed = json.loads(review_run.rejection_counts)
+            if isinstance(parsed, dict):
+                rejection_counts = {
+                    str(key): int(value)
+                    for key, value in parsed.items()
+                    if isinstance(value, int) and value >= 0
+                }
+        except (TypeError, ValueError):
+            rejection_counts = {}
     return templates.TemplateResponse(
         request,
         "job_detail.html",
-        _context(request, principal, settings, job=job, review_run=review_run),
+        _context(
+            request,
+            principal,
+            settings,
+            job=job,
+            review_run=review_run,
+            rejection_counts=rejection_counts,
+        ),
     )
 
 
