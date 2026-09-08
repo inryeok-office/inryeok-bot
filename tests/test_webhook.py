@@ -29,15 +29,17 @@ async def test_allowed_account_comparison_is_case_insensitive(app_client, pr_pay
 
 
 @pytest.mark.asyncio
-async def test_unlisted_account_is_rejected_without_job(app_client, pr_payload):
+async def test_external_installation_account_is_accepted_with_signed_webhook(
+    app_client, pr_payload
+):
     client, factory = app_client
     pr_payload["repository"]["owner"]["login"] = "outside-org"
     pr_payload["installation"]["account"]["login"] = "outside-org"
     body, headers = signed(pr_payload, delivery="outside-account")
     response = await client.post("/webhooks/github", content=body, headers=headers)
-    assert response.json()["ignored"] == "account_not_allowed"
+    assert response.json()["created"] is True
     async with factory() as session:
-        assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 0
+        assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 1
 
 
 @pytest.mark.asyncio
@@ -156,7 +158,7 @@ async def test_installation_repository_sync(app_client):
 
 
 @pytest.mark.asyncio
-async def test_unlisted_installation_is_not_synchronized(app_client):
+async def test_external_installation_is_synchronized(app_client):
     client, factory = app_client
 
     class TrackingGitHub(FakeGitHub):
@@ -173,10 +175,13 @@ async def test_unlisted_installation_is_not_synchronized(app_client):
     }
     body, headers = signed(payload, "installation", "outside-installation")
     response = await client.post("/webhooks/github", content=body, headers=headers)
-    assert response.json()["ignored"] == "account_not_allowed"
-    assert not TrackingGitHub.called
+    assert response.json()["synced"] is True
+    assert TrackingGitHub.called
     async with factory() as session:
-        assert await session.scalar(select(func.count()).select_from(RepositorySettings)) == 0
+        repository = await session.scalar(
+            select(RepositorySettings).where(RepositorySettings.installation_id == 30)
+        )
+        assert repository and repository.repository_owner == "outside-org"
 
 
 @pytest.mark.asyncio

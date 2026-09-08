@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     admin_github_client_id: str = ""
     admin_github_client_secret: SecretStr = SecretStr("")
     admin_local_bypass: bool = False
+    # OAuth authentication and global administrator authorization are separate
+    # concerns.  An empty value is intentionally allowed at model construction
+    # time so non-production tooling can boot, but it makes every authenticated
+    # user ineligible for the administrator console.
+    superadmin_github_logins: str = ""
     worker_poll_seconds: float = Field(2.0, ge=0.1)
     worker_max_attempts: int = Field(3, ge=1, le=10)
     max_pending_jobs: int = Field(100, ge=1, le=10_000)
@@ -80,10 +85,12 @@ class Settings(BaseSettings):
                 raise ValueError("production ADMIN_SESSION_SECRET must be at least 32 characters")
             if not self.github_bot_login:
                 raise ValueError("production GITHUB_BOT_LOGIN is required")
-            if not self.allowed_github_account_set:
-                raise ValueError("production ALLOWED_GITHUB_ACCOUNTS must not be empty")
-            if self.allow_unlisted_github_accounts:
-                raise ValueError("ALLOW_UNLISTED_GITHUB_ACCOUNTS is only available in development")
+            # Installation identity, not an organization-name allowlist, is the
+            # trust boundary for GitHub webhooks.  Keep the legacy settings
+            # fields readable for old environments, but never require or use
+            # them to authorize a repository.  A signed webhook contains an
+            # installation id and all GitHub API calls are made with that
+            # installation's token.
         elif self.public_base_url and parsed.scheme not in {"http", "https"}:
             raise ValueError("PUBLIC_BASE_URL must use HTTP or HTTPS")
         return self
@@ -102,6 +109,21 @@ class Settings(BaseSettings):
         )
 
     @property
+    def superadmin_github_login_set(self) -> frozenset[str]:
+        """Normalized GitHub logins allowed to use the global admin console."""
+
+        return frozenset(
+            value.strip().casefold()
+            for value in self.superadmin_github_logins.split(",")
+            if value.strip()
+        )
+
+    def is_superadmin_login(self, github_login: str) -> bool:
+        """Return whether a GitHub login has global-console administrator access."""
+
+        return github_login.strip().casefold() in self.superadmin_github_login_set
+
+    @property
     def admin_callback_url(self) -> str:
         return f"{self.public_base_url}/auth/github/callback"
 
@@ -114,9 +136,15 @@ class Settings(BaseSettings):
         )
 
     def github_account_allowed(self, account: str) -> bool:
-        if self.environment == "development" and self.allow_unlisted_github_accounts:
-            return True
-        return account.strip().casefold() in self.allowed_github_account_set
+        """Legacy compatibility shim; installation id is the trust boundary.
+
+        Callers must validate the signed webhook installation and use its
+        installation token.  Account login strings are metadata and are not an
+        authorization boundary (this method is intentionally permissive so an
+        old caller cannot silently reintroduce single-tenant behavior).
+        """
+        del account
+        return True
 
     @property
     def github_clone_base_url(self) -> str:

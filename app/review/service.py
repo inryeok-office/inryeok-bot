@@ -35,8 +35,6 @@ class ReviewService:
         self.session, self.github, self.runner = session, github, runner
 
     async def execute(self, job: ReviewJob, execution_id: str | None = None) -> None:
-        if not self.github.settings.github_account_allowed(job.repository_owner):
-            raise ReviewSkipped("repository account is not allowed")
         config = await self.session.scalar(
             select(RepositorySettings).where(
                 RepositorySettings.installation_id == job.installation_id,

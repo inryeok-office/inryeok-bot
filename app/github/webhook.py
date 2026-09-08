@@ -26,14 +26,6 @@ from app.review.settings import EffectiveReviewSettings, resolve
 router = APIRouter()
 logger = logging.getLogger(__name__)
 SUPPORTED_PR_ACTIONS = {"opened", "reopened", "ready_for_review", "synchronize"}
-ACCOUNT_SCOPED_EVENTS = {
-    "pull_request",
-    "issue_comment",
-    "installation",
-    "installation_repositories",
-}
-
-
 async def get_github(settings: Settings = Depends(get_settings)) -> GitHubClient:
     return GitHubClient(settings)
 
@@ -102,23 +94,6 @@ async def _record_delivery(session: AsyncSession, delivery_id: str, event_name: 
         return False
 
 
-def _payload_accounts(payload: dict[str, object], event_name: str) -> set[str]:
-    accounts: set[str] = set()
-    installation = payload.get("installation")
-    if isinstance(installation, dict):
-        account = installation.get("account")
-        if isinstance(account, dict) and isinstance(account.get("login"), str):
-            accounts.add(account["login"])
-    repository = payload.get("repository")
-    if isinstance(repository, dict):
-        owner = repository.get("owner")
-        if isinstance(owner, dict) and isinstance(owner.get("login"), str):
-            accounts.add(owner["login"])
-    if event_name in {"installation", "installation_repositories"} and not accounts:
-        return set()
-    return accounts
-
-
 @router.post("/webhooks/github")
 async def github_webhook(
     request: Request,
@@ -160,10 +135,6 @@ async def github_webhook(
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid webhook payload") from exc
-    if x_github_event in ACCOUNT_SCOPED_EVENTS:
-        accounts = _payload_accounts(payload, x_github_event)
-        if not accounts or not all(settings.github_account_allowed(value) for value in accounts):
-            return {"accepted": True, "ignored": "account_not_allowed"}
     if x_github_event in {"installation", "installation_repositories"}:
         try:
             installation_id = int(payload["installation"]["id"])
@@ -182,8 +153,6 @@ async def github_webhook(
                 repositories = list(payload.get("repositories_added", []))
                 for removed in list(payload.get("repositories_removed", [])):
                     owner, name = str(removed["full_name"]).split("/", 1)
-                    if not settings.github_account_allowed(owner):
-                        continue
                     removed_setting = await session.scalar(
                         select(RepositorySettings).where(
                             RepositorySettings.installation_id == installation_id,
@@ -196,8 +165,6 @@ async def github_webhook(
                         removed_setting.installed = False
             for repository in repositories:
                 owner, name = str(repository["full_name"]).split("/", 1)
-                if not settings.github_account_allowed(owner):
-                    continue
                 repository_setting = await _repository_settings(
                     session, installation_id, owner, name, settings
                 )

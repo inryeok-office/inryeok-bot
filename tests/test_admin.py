@@ -26,6 +26,7 @@ def oauth_settings() -> Settings:
         admin_github_client_id="client-id",
         admin_github_client_secret="client-secret",
         admin_session_secret="s" * 32,
+        superadmin_github_logins="admin-user",
         allowed_github_accounts="acme",
     )
 
@@ -82,15 +83,15 @@ def test_production_requires_https_public_base_url() -> None:
         )
 
 
-def test_production_rejects_empty_account_allowlist() -> None:
-    with pytest.raises(ValidationError, match="ALLOWED_GITHUB_ACCOUNTS"):
-        Settings(
-            environment="production",
-            public_base_url="https://review.example.test",
-            admin_session_secret="x" * 32,
-            github_bot_login="test-bot[bot]",
-            allowed_github_accounts="",
-        )
+def test_production_does_not_require_organization_allowlist() -> None:
+    settings = Settings(
+        environment="production",
+        public_base_url="https://review.example.test",
+        admin_session_secret="x" * 32,
+        github_bot_login="test-bot[bot]",
+        allowed_github_accounts="",
+    )
+    assert settings.github_account_allowed("any-installation-account")
 
 
 @pytest.mark.asyncio
@@ -127,13 +128,9 @@ async def test_admin_detail_presets_are_explained_and_accessible(app_client) -> 
     assert "사용량 많음" in response.text
 
 
-def test_unlisted_accounts_can_only_be_enabled_explicitly_in_development() -> None:
-    development = Settings(
-        environment="development",
-        allow_unlisted_github_accounts=True,
-    )
-    assert development.github_account_allowed("any-account")
-    assert not Settings(environment="test").github_account_allowed("any-account")
+def test_installation_trust_does_not_depend_on_account_name() -> None:
+    assert Settings(environment="development").github_account_allowed("any-account")
+    assert Settings(environment="test").github_account_allowed("any-account")
 
 
 def test_admin_redirect_stays_local() -> None:
@@ -308,6 +305,37 @@ async def test_oauth_callback_creates_server_side_session(app_client) -> None:
         records = list((await session.execute(select(AdminSession))).scalars())
         assert len(records) == 1
         assert "user-secret-token" not in records[0].encrypted_access_token
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_authenticated_non_superadmin_cannot_enter_global_console(app_client) -> None:
+    client, factory = app_client
+    settings = oauth_settings()
+    settings.superadmin_github_logins = "exijn"
+    app.dependency_overrides[get_settings] = lambda: settings
+    principal = AdminPrincipal("non-admin-session", 43, "external-user", "user-token")
+    async with factory() as session:
+        session.add(
+            AdminSession(
+                id=principal.session_id,
+                github_user_id=43,
+                github_login=principal.github_login,
+                encrypted_access_token=encrypt_token("user-token", settings),
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+        await session.commit()
+    client.cookies.set("admin_session", sign_session_id(principal.session_id, settings))
+    response = await client.get("/admin")
+    assert response.status_code == 403
+
+
+def test_superadmin_login_matching_is_case_insensitive_and_fail_closed() -> None:
+    settings = Settings(environment="test", superadmin_github_logins=" ExIJn, second ")
+    assert settings.is_superadmin_login("exijn")
+    assert settings.is_superadmin_login("SECOND")
+    assert not Settings(environment="test").is_superadmin_login("exijn")
 
 
 @pytest.mark.asyncio
