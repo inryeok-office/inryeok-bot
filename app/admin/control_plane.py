@@ -19,7 +19,6 @@ from app.jobs.models import (
     RepositorySettings,
     ReviewJob,
     ReviewRun,
-    WebhookDelivery,
 )
 from app.review.settings import (
     EffectiveReviewSettings,
@@ -323,6 +322,135 @@ def apply_repository_policy_patch(
     return tuple(changed)
 
 
+_GLOBAL_PATCH_FIELDS = frozenset(
+    {
+        "enabled",
+        "auto_review_enabled",
+        "command_review_enabled",
+        "language",
+        "review_profile",
+        "model",
+        "reasoning_effort",
+        "max_findings",
+        "minimum_confidence",
+        "include_low_severity",
+        "minimum_severity",
+        "ignored_paths",
+        "enabled_categories",
+        "review_on_opened",
+        "review_on_reopened",
+        "review_on_ready_for_review",
+        "review_on_synchronize",
+        "synchronize_debounce_seconds",
+        "command_cooldown_seconds",
+        "codex_timeout_seconds",
+        "review_domain_mode",
+        "manual_review_domains",
+    }
+)
+
+
+def validate_global_policy_patch(
+    patch: Mapping[str, Any], settings: Settings
+) -> dict[str, Any]:
+    """Validate a global review-default PATCH without applying omitted fields."""
+
+    unknown = set(patch) - _GLOBAL_PATCH_FIELDS
+    if unknown:
+        raise ValueError(f"unsupported policy fields: {', '.join(sorted(unknown))}")
+    normalized = dict(patch)
+    for name in (
+        "enabled",
+        "auto_review_enabled",
+        "command_review_enabled",
+        "include_low_severity",
+        "review_on_opened",
+        "review_on_reopened",
+        "review_on_ready_for_review",
+        "review_on_synchronize",
+    ):
+        if name in normalized and not isinstance(normalized[name], bool):
+            raise ValueError(f"{name} must be boolean")
+    if "language" in normalized and normalized["language"] not in {"ko", "en"}:
+        raise ValueError("unsupported language")
+    if "review_profile" in normalized:
+        validate_choice("ko", str(normalized["review_profile"]), None, settings)
+    if "model" in normalized and normalized["model"]:
+        validate_choice("ko", "BALANCED", str(normalized["model"]), settings)
+    if "reasoning_effort" in normalized:
+        validate_choice(
+            "ko", "BALANCED", None, settings, str(normalized["reasoning_effort"])
+        )
+    if "max_findings" in normalized:
+        value = int(normalized["max_findings"])
+        if not 1 <= value <= 50:
+            raise ValueError("maximum findings outside safety limit")
+        normalized["max_findings"] = value
+    if "minimum_confidence" in normalized:
+        confidence = float(normalized["minimum_confidence"])
+        if not 0.8 <= confidence <= 1:
+            raise ValueError("minimum confidence outside safety limit")
+        normalized["minimum_confidence"] = confidence
+    if "minimum_severity" in normalized:
+        severity = str(normalized["minimum_severity"]).upper()
+        if severity not in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}:
+            raise ValueError("unsupported minimum severity")
+        normalized["minimum_severity"] = severity
+    if "ignored_paths" in normalized and normalized["ignored_paths"] is not None:
+        normalized["ignored_paths"] = "\n".join(validate_paths(str(normalized["ignored_paths"])))
+    for name in (
+        "synchronize_debounce_seconds",
+        "command_cooldown_seconds",
+        "codex_timeout_seconds",
+    ):
+        if name in normalized:
+            value = int(normalized[name])
+            minimum = 30 if name == "codex_timeout_seconds" else 0
+            if not minimum <= value <= 3600:
+                raise ValueError(f"{name} outside safety limit")
+            normalized[name] = value
+    if "review_domain_mode" in normalized:
+        mode = str(normalized["review_domain_mode"]).upper()
+        if mode not in {"AUTO", "MANUAL"}:
+            raise ValueError("unsupported review domain mode")
+        normalized["review_domain_mode"] = mode
+    if "manual_review_domains" in normalized:
+        domains = normalized["manual_review_domains"]
+        if isinstance(domains, (tuple, list, set)):
+            normalized["manual_review_domains"] = ",".join(str(item) for item in domains)
+    return normalized
+
+
+def apply_global_policy_patch(
+    global_settings: GlobalReviewSettings,
+    patch: Mapping[str, Any],
+    settings: Settings,
+) -> tuple[str, ...]:
+    """Apply a validated global PATCH and preserve profile provenance."""
+
+    normalized = validate_global_policy_patch(patch, settings)
+    changed: list[str] = []
+    for field_name, value in normalized.items():
+        if getattr(global_settings, field_name) != value:
+            setattr(global_settings, field_name, value)
+            changed.append(field_name)
+    quality_fields = {
+        "minimum_confidence",
+        "minimum_severity",
+        "include_low_severity",
+        "max_findings",
+    }
+    if "review_profile" in normalized and not quality_fields.intersection(normalized):
+        if global_settings.profile_defaults_inherited is not True:
+            global_settings.profile_defaults_inherited = True
+            changed.append("profile_defaults_inherited")
+    elif quality_fields.intersection(normalized):
+        if global_settings.profile_defaults_inherited is not False:
+            global_settings.profile_defaults_inherited = False
+            changed.append("profile_defaults_inherited")
+    return tuple(changed)
+
+
 @dataclass(frozen=True)
 class RepositorySummary:
     repository_id: int
@@ -381,12 +509,6 @@ async def repository_summaries(
                 .order_by(ReviewRun.id.desc())
                 .limit(1)
             )
-        recent_webhook = await session.scalar(
-            select(WebhookDelivery)
-            .where(WebhookDelivery.event_name.is_not(None))
-            .order_by(WebhookDelivery.created_at.desc())
-            .limit(1)
-        )
         summaries.append(
             RepositorySummary(
                 repository_id=repository.id,
@@ -397,7 +519,11 @@ async def repository_summaries(
                 recent_job_id=recent_job.id if recent_job else None,
                 recent_job_status=recent_job.status.value if recent_job else None,
                 recent_review_id=recent_run.id if recent_run else None,
-                recent_webhook_id=recent_webhook.delivery_id if recent_webhook else None,
+                # The legacy delivery table has no repository relation.  Do
+                # not present a global latest delivery as this repository's
+                # activity; the dedicated delivery read model returns UNKNOWN
+                # until that relation is available.
+                recent_webhook_id=None,
             )
         )
     return summaries

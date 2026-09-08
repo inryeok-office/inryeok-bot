@@ -3,8 +3,10 @@ import pytest
 from app.admin.control_plane import (
     BlockReason,
     PolicySource,
+    apply_global_policy_patch,
     apply_repository_policy_patch,
     resolve_repository_policy,
+    validate_global_policy_patch,
     validate_repository_policy_patch,
 )
 from app.config import Settings
@@ -92,3 +94,31 @@ def test_policy_patch_rejects_unknown_and_unsafe_values() -> None:
         validate_repository_policy_patch({"enabled": False}, _settings())
     with pytest.raises(ValueError, match="minimum confidence"):
         validate_repository_policy_patch({"override_minimum_confidence": 0.5}, _settings())
+
+
+def test_global_profile_patch_records_inherited_provenance() -> None:
+    global_settings = GlobalReviewSettings(id=1, profile_defaults_inherited=False)
+    changed = apply_global_policy_patch(
+        global_settings,
+        {"review_profile": "THOROUGH"},
+        _settings(),
+    )
+    assert "profile_defaults_inherited" in changed
+    assert global_settings.profile_defaults_inherited is True
+
+
+def test_global_threshold_patch_marks_custom_provenance() -> None:
+    global_settings = GlobalReviewSettings(id=1, profile_defaults_inherited=True)
+    apply_global_policy_patch(
+        global_settings,
+        {"minimum_confidence": 0.85},
+        _settings(),
+    )
+    assert global_settings.profile_defaults_inherited is False
+
+
+def test_global_patch_rejects_unknown_and_unsafe_values() -> None:
+    with pytest.raises(ValueError, match="unsupported policy fields"):
+        validate_global_policy_patch({"processing_paused": True}, _settings())
+    with pytest.raises(ValueError, match="outside safety limit"):
+        validate_global_policy_patch({"codex_timeout_seconds": 1}, _settings())
