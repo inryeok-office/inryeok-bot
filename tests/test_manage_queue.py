@@ -16,9 +16,7 @@ async def test_pause_test_does_not_rewrite_repository_policy(
     """The legacy test pause command must not reset production repository rows."""
     _, factory = app_client
     async with factory() as session:
-        session.add(
-            GlobalReviewSettings(id=1, processing_paused=False)
-        )
+        session.add(GlobalReviewSettings(id=1, processing_paused=False))
         session.add(
             RepositorySettings(
                 installation_id=1,
