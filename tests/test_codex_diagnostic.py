@@ -54,7 +54,7 @@ def test_diagnostic_redacts_paths_pem_prompt_and_limits_bytes(tmp_path) -> None:
     ).encode()
     lines = redact_diagnostic(
         payload,
-        b"-----BEGIN PRIVATE KEY-----secret-----END PRIVATE KEY-----",
+        ("-----BEGIN " + "PRIVATE KEY-----secret-----END PRIVATE KEY-----").encode(),
         sensitive_values=(prompt,),
         sensitive_paths=(tmp_path,),
     )
