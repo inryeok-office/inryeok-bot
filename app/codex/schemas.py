@@ -48,7 +48,9 @@ class Finding(BaseModel):
     scope: FindingScope = FindingScope.LINE
     path: str | None = Field(default=None, min_length=1, max_length=1024)
     line: int | None = Field(default=None, ge=1)
-    side: Literal["RIGHT"] | None = None
+    # Legacy structured output omitted side for line findings; RIGHT is the
+    # only publishable side and remains the safe backwards-compatible default.
+    side: Literal["RIGHT"] = "RIGHT"
     category: Category
     severity: Severity
     confidence: float = Field(ge=0, le=1)

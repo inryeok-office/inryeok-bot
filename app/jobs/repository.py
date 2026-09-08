@@ -55,8 +55,7 @@ def claim_statement() -> Select[tuple[ReviewJob]]:
                     RepositorySettings.override_auto_review_enabled.is_(None)
                     | RepositorySettings.override_auto_review_enabled.is_(True)
                 )
-                |
-                (ReviewJob.trigger_type == TriggerType.COMMAND)
+                | (ReviewJob.trigger_type == TriggerType.COMMAND)
                 & (
                     RepositorySettings.override_command_review_enabled.is_(None)
                     | RepositorySettings.override_command_review_enabled.is_(True)

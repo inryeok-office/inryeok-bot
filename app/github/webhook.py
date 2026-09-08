@@ -26,6 +26,8 @@ from app.review.settings import EffectiveReviewSettings, resolve
 router = APIRouter()
 logger = logging.getLogger(__name__)
 SUPPORTED_PR_ACTIONS = {"opened", "reopened", "ready_for_review", "synchronize"}
+
+
 async def get_github(settings: Settings = Depends(get_settings)) -> GitHubClient:
     return GitHubClient(settings)
 
