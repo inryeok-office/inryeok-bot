@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.auth import AdminPrincipal, csrf_token, require_admin, verify_csrf
+from app.admin.control_plane import resolve_repository_policy
 from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.jobs.models import (
@@ -258,7 +259,8 @@ async def repositories(
     if global_settings is None:
         global_settings = GlobalReviewSettings(id=1)
     effective_by_repository = {
-        repository.id: resolve(global_settings, repository, settings) for repository in values
+        repository.id: resolve_repository_policy(global_settings, repository, settings)
+        for repository in values
     }
     return templates.TemplateResponse(
         request,
@@ -299,7 +301,7 @@ async def repository_detail(
             principal,
             settings,
             repository=repository,
-            effective=resolve(global_settings, repository, settings),
+            effective=resolve_repository_policy(global_settings, repository, settings),
             models=settings.allowed_codex_models,
             domains=[item.value for item in ReviewDomain],
             prompt_version=PROMPT_VERSION,
