@@ -143,9 +143,7 @@ async def test_file_and_pr_findings_publish_in_review_summary(app_client, monkey
     )
     async with factory() as session:
         session.add(
-            RepositorySettings(
-                installation_id=3, repository_owner="acme", repository_name="repo"
-            )
+            RepositorySettings(installation_id=3, repository_owner="acme", repository_name="repo")
         )
         job = ReviewJob(
             delivery_id="summary-findings",
