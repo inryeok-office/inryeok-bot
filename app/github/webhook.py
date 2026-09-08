@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.admin.control_plane import resolve_repository_policy
 from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.github.client import GitHubClient
@@ -22,7 +23,7 @@ from app.jobs.models import (
     WebhookDelivery,
 )
 from app.jobs.repository import JobRepository, QueueCapacityError
-from app.review.settings import EffectiveReviewSettings, resolve
+from app.review.settings import EffectiveReviewSettings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -103,7 +104,7 @@ async def _effective_settings(
         global_settings = GlobalReviewSettings(id=1)
         session.add(global_settings)
         await session.flush()
-    return resolve(global_settings, repository, settings)
+    return resolve_repository_policy(global_settings, repository, settings).settings
 
 
 def _trigger_enabled(action: str, effective: EffectiveReviewSettings) -> bool:
