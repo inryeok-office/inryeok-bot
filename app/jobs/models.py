@@ -69,6 +69,49 @@ class ReviewDomain(StrEnum):
     LIBRARY_SDK_CLI = "LIBRARY_SDK_CLI"
 
 
+class InstallationStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    SUSPENDED = "SUSPENDED"
+    REMOVED = "REMOVED"
+    SYNC_REQUIRED = "SYNC_REQUIRED"
+
+
+class GitHubInstallation(Base):
+    """Durable GitHub App installation identity.
+
+    ``github_installation_id`` is the external identity.  Account login and
+    repository names are mutable GitHub metadata and must never be used as a
+    tenant key.
+    """
+
+    __tablename__ = "github_installations"
+    __table_args__ = (UniqueConstraint("github_installation_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    github_installation_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    account_id: Mapped[int | None] = mapped_column(BigInteger)
+    account_login: Mapped[str | None] = mapped_column(String(255))
+    account_type: Mapped[str | None] = mapped_column(String(32))
+    status: Mapped[InstallationStatus] = mapped_column(
+        Enum(InstallationStatus, native_enum=False),
+        default=InstallationStatus.ACTIVE,
+        index=True,
+    )
+    repository_selection: Mapped[str | None] = mapped_column(String(32))
+    installed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    uninstalled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    repositories: Mapped[list["RepositorySettings"]] = relationship(
+        back_populates="installation", foreign_keys="RepositorySettings.installation_fk_id"
+    )
+
+
 class ReviewJob(Base):
     __tablename__ = "review_jobs"
     __table_args__ = (
@@ -137,6 +180,10 @@ class RepositorySettings(Base):
     )
     id: Mapped[int] = mapped_column(primary_key=True)
     installation_id: Mapped[int]
+    installation_fk_id: Mapped[int | None] = mapped_column(
+        ForeignKey("github_installations.id", ondelete="SET NULL"), index=True
+    )
+    github_repository_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     repository_owner: Mapped[str] = mapped_column(String(255))
     repository_name: Mapped[str] = mapped_column(String(255))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -151,6 +198,7 @@ class RepositorySettings(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     override_enabled: Mapped[bool | None] = mapped_column(Boolean)
     override_auto_review_enabled: Mapped[bool | None] = mapped_column(Boolean)
     override_command_review_enabled: Mapped[bool | None] = mapped_column(Boolean)
@@ -173,11 +221,15 @@ class RepositorySettings(Base):
     override_command_cooldown_seconds: Mapped[int | None] = mapped_column(Integer)
     override_review_domain_mode: Mapped[str | None] = mapped_column(String(16))
     override_manual_review_domains: Mapped[str | None] = mapped_column(Text)
+    installation: Mapped[GitHubInstallation | None] = relationship(
+        back_populates="repositories", foreign_keys=[installation_fk_id]
+    )
 
 
 class GlobalReviewSettings(Base):
     __tablename__ = "global_review_settings"
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_review_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     command_review_enabled: Mapped[bool] = mapped_column(Boolean, default=True)

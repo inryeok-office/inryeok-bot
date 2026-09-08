@@ -16,7 +16,9 @@ from app.github.client import GitHubClient
 from app.github.schemas import IssueCommentEvent, PullRequestEvent, is_review_command
 from app.github.verifier import verify_signature
 from app.jobs.models import (
+    GitHubInstallation,
     GlobalReviewSettings,
+    InstallationStatus,
     RepositorySettings,
     ReviewJob,
     TriggerType,
@@ -33,6 +35,7 @@ DELIVERY_PROCESSED = "PROCESSED"
 DELIVERY_IGNORED = "IGNORED"
 DELIVERY_FAILED_RETRYABLE = "FAILED_RETRYABLE"
 DELIVERY_FAILED_FINAL = "FAILED_FINAL"
+DELIVERY_MANUAL_REDELIVERY_REQUIRED = "MANUAL_REDELIVERY_REQUIRED"
 
 
 async def get_github(settings: Settings = Depends(get_settings)) -> GitHubClient:
@@ -47,6 +50,8 @@ async def _repository_settings(
     settings: Settings,
     *,
     mark_installed: bool = False,
+    github_repository_id: int | None = None,
+    account_login: str | None = None,
 ) -> RepositorySettings:
     # GitHub owner/repository names are case-insensitive.  Canonicalizing at
     # the trust-boundary prevents a webhook using ``AcMe/Repo`` from creating
@@ -80,10 +85,46 @@ async def _repository_settings(
         value.installed = True
     value.repository_owner = owner
     value.repository_name = name
+    if github_repository_id is not None:
+        value.github_repository_id = github_repository_id
+    installation = await session.scalar(
+        select(GitHubInstallation).where(
+            GitHubInstallation.github_installation_id == installation_id
+        )
+    )
+    if installation is None:
+        installation = GitHubInstallation(
+            github_installation_id=installation_id,
+            account_login=account_login.strip().casefold() if account_login else None,
+            status=InstallationStatus.ACTIVE,
+        )
+        session.add(installation)
+        await session.flush()
+    elif account_login:
+        installation.account_login = account_login.strip().casefold()
+    installation.status = InstallationStatus.ACTIVE if mark_installed else installation.status
+    installation.last_synced_at = (
+        datetime.now(UTC) if mark_installed else installation.last_synced_at
+    )
+    value.installation_fk_id = installation.id
     return value
 
 
-async def _disable_installation(session: AsyncSession, installation_id: int) -> None:
+async def _disable_installation(
+    session: AsyncSession, installation_id: int, status: InstallationStatus
+) -> None:
+    installation = await session.scalar(
+        select(GitHubInstallation).where(
+            GitHubInstallation.github_installation_id == installation_id
+        )
+    )
+    if installation is None:
+        installation = GitHubInstallation(github_installation_id=installation_id, status=status)
+        session.add(installation)
+        await session.flush()
+    else:
+        installation.status = status
+        installation.last_synced_at = datetime.now(UTC)
     values = (
         await session.scalars(
             select(RepositorySettings).where(RepositorySettings.installation_id == installation_id)
@@ -231,7 +272,13 @@ async def github_webhook(
             action = str(payload.get("action", ""))
             if x_github_event == "installation":
                 if action in {"deleted", "suspend"}:
-                    await _disable_installation(session, installation_id)
+                    await _disable_installation(
+                        session,
+                        installation_id,
+                        InstallationStatus.REMOVED
+                        if action == "deleted"
+                        else InstallationStatus.SUSPENDED,
+                    )
                     repositories: list[dict[str, object]] = []
                 elif action in {"created", "unsuspend"}:
                     repositories = await github.list_installation_repositories(installation_id)
@@ -257,8 +304,24 @@ async def github_webhook(
                         removed_setting.installed = False
             for repository in repositories:
                 owner, name = str(repository["full_name"]).split("/", 1)
+                account = payload.get("installation", {}).get("account", {})
                 repository_setting = await _repository_settings(
-                    session, installation_id, owner, name, settings, mark_installed=True
+                    session,
+                    installation_id,
+                    owner,
+                    name,
+                    settings,
+                    mark_installed=True,
+                    github_repository_id=(
+                        int(str(repository["id"]))
+                        if isinstance(repository.get("id"), int)
+                        else None
+                    ),
+                    account_login=(
+                        str(account.get("login"))
+                        if isinstance(account, dict) and account.get("login")
+                        else None
+                    ),
                 )
                 # Installation sync supplies defaults only.  Nullable
                 # overrides are the admin's explicit intent and must win over
@@ -293,6 +356,8 @@ async def github_webhook(
                 pr_event.repository.owner.login,
                 pr_event.repository.name,
                 settings,
+                github_repository_id=pr_event.repository.id,
+                account_login=pr_event.repository.owner.login,
             )
             effective = await _effective_settings(session, repo_settings, settings)
             if not effective.enabled or not effective.auto_review_enabled:
@@ -339,6 +404,8 @@ async def github_webhook(
                 comment_event.repository.owner.login,
                 comment_event.repository.name,
                 settings,
+                github_repository_id=comment_event.repository.id,
+                account_login=comment_event.repository.owner.login,
             )
             effective = await _effective_settings(session, repo_settings, settings)
             if not effective.enabled or not effective.command_review_enabled:
@@ -423,3 +490,40 @@ async def github_webhook(
         await session.rollback()
         await _finish_delivery(session, delivery, DELIVERY_FAILED_RETRYABLE, "HANDLER_ERROR", 500)
         raise
+
+
+async def recover_stale_deliveries(
+    session: AsyncSession, *, threshold_seconds: int = 900, max_attempts: int = 3,
+    apply: bool = False,
+) -> list[dict[str, object]]:
+    """Safely classify stale PROCESSING deliveries without replaying payloads."""
+    cutoff = datetime.now(UTC) - timedelta(seconds=threshold_seconds)
+    rows = list((await session.scalars(select(WebhookDelivery).where(
+        WebhookDelivery.status == DELIVERY_PROCESSING,
+        WebhookDelivery.processing_started_at < cutoff,
+    ).order_by(WebhookDelivery.id))).all())
+    report: list[dict[str, object]] = []
+    for delivery in rows:
+        related = await session.scalar(select(ReviewJob.id).where(
+            ReviewJob.delivery_id == delivery.delivery_id
+        ))
+        reason = "JOB_ALREADY_ENQUEUED" if related is not None else DELIVERY_MANUAL_REDELIVERY_REQUIRED
+        report.append({"delivery_id": delivery.delivery_id, "job_id": related,
+                       "reason": reason, "attempt_count": delivery.attempt_count})
+        if not apply:
+            continue
+        if delivery.attempt_count >= max_attempts:
+            delivery.status = DELIVERY_FAILED_FINAL
+            delivery.safe_reason = "STALE_PROCESSING_MAX_ATTEMPTS"
+        elif related is not None:
+            delivery.status = DELIVERY_PROCESSED
+            delivery.safe_reason = "JOB_ALREADY_ENQUEUED"
+        else:
+            delivery.status = DELIVERY_FAILED_FINAL
+            delivery.safe_reason = DELIVERY_MANUAL_REDELIVERY_REQUIRED
+        delivery.attempt_count += 1
+        delivery.completed_at = datetime.now(UTC)
+        delivery.response_status = 200
+    if apply and rows:
+        await session.commit()
+    return report

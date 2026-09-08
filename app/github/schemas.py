@@ -10,6 +10,7 @@ class User(GitHubModel):
 
 
 class Repository(GitHubModel):
+    id: int | None = None
     name: str
     owner: User
 
