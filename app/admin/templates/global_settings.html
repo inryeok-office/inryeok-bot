@@ -2,7 +2,6 @@
 {% block title %}설정{% endblock %}
 {% block content %}
 <div class="page-head"><div><h1>설정</h1><p>전역 기본값입니다. 저장소에서 별도로 지정한 값은 이 설정을 상속하지 않습니다.</p></div></div>
-<span class="sr-only">핵심 검토 균형 검토 상세 검토 사용량 많음 낮음 보통 높음 �ٽ� ���� ���� ���� �� ���� ��뷮 ���� ?듭떖 寃?? 洹좏삎 寃?? ?곸꽭 寃?? ?ъ슜??留롮쓬</span>
 {% if global_settings.processing_paused %}<div class="banner warning"><strong>리뷰 처리가 일시중지되어 있습니다.</strong> 일시중지는 운영 제어이며 아래 기본값과 별개입니다.</div>{% endif %}
 <form class="card form-card" method="post"><input type="hidden" name="_csrf" value="{{ csrf_token }}">
 <section class="settings-section"><h2>기본 동작</h2><p>신규 설치 저장소에 적용되는 리뷰와 트리거 기본값입니다.</p><div class="check-grid"><label class="check"><input type="checkbox" name="enabled" value="true" {% if global_settings.enabled %}checked{% endif %}> 리뷰 처리 사용</label><label class="check"><input type="checkbox" name="auto_review_enabled" value="true" {% if global_settings.auto_review_enabled %}checked{% endif %}> 자동 리뷰 사용</label><label class="check"><input type="checkbox" name="command_review_enabled" value="true" {% if global_settings.command_review_enabled %}checked{% endif %}> 수동 <code>/review</code> 허용</label></div></section>

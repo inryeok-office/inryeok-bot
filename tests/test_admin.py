@@ -125,7 +125,7 @@ async def test_admin_detail_presets_are_explained_and_accessible(app_client) -> 
     assert "균형 검토" in response.text
     assert "상세 검토" in response.text
     assert 'name="review_profile"' in response.text
-    assert "사용량 많음" in response.text
+    assert "리뷰 품질" in response.text
 
 
 def test_installation_trust_does_not_depend_on_account_name() -> None:
@@ -265,7 +265,7 @@ async def test_audit_log_page_is_available_to_authenticated_admin(app_client) ->
     client, _, _, _, _ = await authenticated_repository(app_client)
     response = await client.get("/admin/audit")
     assert response.status_code == 200
-    assert "감사 로그" in response.text
+    assert "이벤트 · 감사" in response.text
 
 
 @pytest.mark.asyncio
