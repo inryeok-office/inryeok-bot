@@ -1,3 +1,4 @@
+import json
 import logging
 
 import httpx
@@ -158,6 +159,7 @@ class ReviewService:
             evidence_findings_count=validation.evidence_count,
             deduplicated_findings_count=validation.deduplicated_count,
             published_findings_count=validation.published_count,
+            rejection_counts=json.dumps(validation.rejection_counts, sort_keys=True),
             github_review_id=None,
         )
         logger.info(

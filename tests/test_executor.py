@@ -30,9 +30,6 @@ async def test_executor_runner_supports_unix_socket(monkeypatch, tmp_path) -> No
 
     class Client:
         def __init__(self, **kwargs: object) -> None:
-            pass
-
-        def __init__(self, **kwargs: object) -> None:
             seen.update(kwargs)
 
         async def __aenter__(self) -> "Client":

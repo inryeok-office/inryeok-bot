@@ -241,6 +241,7 @@ class ReviewRun(Base):
     evidence_findings_count: Mapped[int] = mapped_column(Integer, default=0)
     deduplicated_findings_count: Mapped[int] = mapped_column(Integer, default=0)
     published_findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    rejection_counts: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     job: Mapped[ReviewJob] = relationship(back_populates="runs")
     findings: Mapped[list["FindingRecord"]] = relationship(

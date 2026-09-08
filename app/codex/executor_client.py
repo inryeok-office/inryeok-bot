@@ -99,16 +99,16 @@ class ExecutorRunner(ReviewRunner):
             body: dict[str, object] = {}
             try:
                 body = response.json()
-                error = str(body.get("error_code", "EXECUTOR_INTERNAL"))
+                error_code = str(body.get("error_code", "EXECUTOR_INTERNAL"))
                 retryable = bool(body.get("retryable", False))
             except ValueError:
-                error = "EXECUTOR_FAILED"
+                error_code = "EXECUTOR_FAILED"
                 retryable = False
             codex_error = CodexError(
-                error,
+                error_code,
                 "Codex executor rejected the review",
                 retryable=retryable,
-                signature=str(body.get("matched_safe_signature", error)),
+                signature=str(body.get("matched_safe_signature", error_code)),
             )
             raw_exit_code = body.get("exit_code")
             if isinstance(raw_exit_code, int):
