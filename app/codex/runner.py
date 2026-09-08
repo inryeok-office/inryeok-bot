@@ -305,6 +305,71 @@ class CodexRunner:
         )
         self.schema_path = configured_schema.resolve()
 
+    def _validate_schema_definition(self) -> None:
+        """Validate the conservative schema subset accepted by codex-cli.
+
+        The CLI's structured-output adapter does not consistently accept
+        conditional/compositional JSON Schema.  Keep those failures explicit
+        and fail before spawning a model process.
+        """
+        try:
+            payload = json.loads(self.schema_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise CodexError(
+                "SCHEMA_DEFINITION_ERROR",
+                "Review output schema is unreadable or invalid",
+                signature="schema_file_invalid",
+            ) from exc
+        if payload.get("type") != "object" or payload.get("additionalProperties") is not False:
+            raise CodexError(
+                "SCHEMA_DEFINITION_ERROR",
+                "Review schema root is unsupported",
+                signature="schema_root",
+            )
+        unsupported = {"$ref", "$defs", "oneOf", "anyOf", "allOf", "if", "then", "else"}
+        found: set[str] = set()
+        mismatch = False
+
+        def walk(value: object) -> None:
+            nonlocal mismatch
+            if isinstance(value, dict):
+                found.update(unsupported.intersection(value))
+                if "properties" in value:
+                    nested_props = value.get("properties")
+                    nested_required = value.get("required")
+                    if (
+                        not isinstance(nested_props, dict)
+                        or not isinstance(nested_required, list)
+                        or set(nested_required) != set(nested_props)
+                    ):
+                        mismatch = True
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+
+        walk(payload)
+        if found:
+            raise CodexError(
+                "SCHEMA_DEFINITION_ERROR",
+                "Review schema uses unsupported composition",
+                signature="schema_unsupported_keyword",
+            )
+        props = payload.get("properties")
+        required = payload.get("required")
+        if (
+            mismatch
+            or not isinstance(props, dict)
+            or not isinstance(required, list)
+            or set(required) != set(props)
+        ):
+            raise CodexError(
+                "SCHEMA_DEFINITION_ERROR",
+                "Review schema required/properties mismatch",
+                signature="schema_required_mismatch",
+            )
+
     async def run(
         self,
         checkout: Path,
@@ -314,6 +379,7 @@ class CodexRunner:
         execution_id: str | None = None,
         reasoning_effort: str | None = None,
     ) -> ReviewOutput:
+        self._validate_schema_definition()
         command = [
             self.settings.codex_command,
             "exec",

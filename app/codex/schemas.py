@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Severity(StrEnum):
@@ -50,7 +50,7 @@ class Finding(BaseModel):
     line: int | None = Field(default=None, ge=1)
     # Legacy structured output omitted side for line findings; RIGHT is the
     # only publishable side and remains the safe backwards-compatible default.
-    side: Literal["RIGHT"] = "RIGHT"
+    side: Literal["RIGHT"] | None = None
     category: Category
     severity: Severity
     confidence: float = Field(ge=0, le=1)
@@ -64,6 +64,14 @@ class Finding(BaseModel):
     evidence: str | None = Field(default=None, max_length=1200)
     suggested_fix: str | None = Field(default=None, max_length=1200)
     domain: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_line_side(cls, value: object) -> object:
+        if isinstance(value, dict) and value.get("scope", "LINE") == "LINE":
+            value = dict(value)
+            value.setdefault("side", "RIGHT")
+        return value
 
 
 class ReviewOutput(BaseModel):
