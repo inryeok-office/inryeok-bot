@@ -161,13 +161,18 @@ async def callback(
         if user_response.status_code >= 400:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "GitHub user lookup failed")
         user = user_response.json()
+    github_login = str(user.get("login", ""))
+    if not settings.is_superadmin_login(github_login):
+        # Do not create a server-side session for an authenticated GitHub user
+        # who is not explicitly authorized for the global administrator console.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "administrator access is not allowed")
     session_id = secrets.token_urlsafe(32)
     lifetime = min(int(token_data.get("expires_in", 28800)), 28800)
     session.add(
         AdminSession(
             id=session_id,
             github_user_id=int(user["id"]),
-            github_login=str(user["login"]),
+            github_login=github_login,
             encrypted_access_token=encrypt_token(str(access_token), settings),
             expires_at=datetime.now(UTC) + timedelta(seconds=lifetime),
         )

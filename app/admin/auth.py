@@ -101,6 +101,12 @@ async def require_admin(
         await session.delete(record)
         await session.commit()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "administrator session expired")
+    # A valid OAuth session only proves identity.  Global administrator access
+    # is an explicit, separately configured authorization decision.  Keep this
+    # check before decrypting the GitHub token so an unauthorized account never
+    # receives administrator data or an access-token-derived principal.
+    if not settings.is_superadmin_login(record.github_login):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "administrator access is not allowed")
     principal = AdminPrincipal(
         record.id,
         record.github_user_id,
