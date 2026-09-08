@@ -143,6 +143,56 @@ class FakeProcess:
 
 
 @pytest.mark.asyncio
+async def test_codex_runner_reports_safe_output_contract_location(monkeypatch, tmp_path) -> None:
+    class InvalidProcess(FakeProcess):
+        async def communicate(self, prompt: bytes) -> tuple[bytes, bytes]:
+            del prompt
+            return (
+                json.dumps(
+                    {
+                        "summary": "ok",
+                        "findings": [
+                            {
+                                "scope": "LINE",
+                                "path": "src/a.py",
+                                "line": 1,
+                                "side": "RIGHT",
+                                "category": "BUG",
+                                "severity": "HIGH",
+                                "confidence": 0.9,
+                                "title": "제목",
+                                "body": "본문",
+                                "condition": None,
+                                "impact": None,
+                                "evidence": None,
+                                "suggested_fix": None,
+                                "domain": None,
+                                "unexpected": "must not be retained",
+                            }
+                        ],
+                    }
+                ).encode(),
+                b"",
+            )
+
+    async def create(*args: object, **kwargs: object) -> InvalidProcess:
+        del args, kwargs
+        return InvalidProcess()
+
+    monkeypatch.setattr("app.codex.runner.asyncio.create_subprocess_exec", create)
+    from app.codex.runner import CodexError
+
+    with pytest.raises(CodexError) as raised:
+        await CodexRunner(Settings(environment="test", codex_command="codex")).run(
+            tmp_path, "review this"
+        )
+    assert raised.value.code == "CODEX_OUTPUT_SCHEMA_MISMATCH"
+    assert raised.value.signature == "output_contract_mismatch"
+    assert any("output_field=findings.0" in item for item in raised.value.safe_diagnostic)
+    assert all("must not be retained" not in item for item in raised.value.safe_diagnostic)
+
+
+@pytest.mark.asyncio
 async def test_codex_runner_uses_managed_read_only_profile(monkeypatch, tmp_path) -> None:
     captured: tuple[object, ...] = ()
     captured_env: dict[str, str] = {}

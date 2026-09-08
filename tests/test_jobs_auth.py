@@ -230,6 +230,7 @@ async def test_failure_notices_are_korean_and_deduplicated(app_client) -> None:
         ("CODEX_RATE_LIMIT", "RATE_LIMIT"),
         ("CODEX_AUTH", "AUTH"),
         ("CODEX_SERVICE_UNAVAILABLE", "SERVICE"),
+        ("CODEX_OUTPUT_SCHEMA_MISMATCH", "SCHEMA"),
         ("CODEX_FAILED", "INTERNAL"),
     ]
     async with factory() as session:

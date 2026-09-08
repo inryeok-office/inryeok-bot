@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
+from pydantic import ValidationError
+
 from app.codex.schemas import ReviewOutput
 from app.config import Settings
 
@@ -16,6 +18,18 @@ MAX_CAPTURE_BYTES = 16_000
 MAX_SAFE_DIAGNOSTIC_BYTES = 2_048
 MAX_SAFE_DIAGNOSTIC_LINES = 10
 MAX_SAFE_DIAGNOSTIC_LINE = 300
+
+
+def _validation_diagnostic(error: ValidationError) -> tuple[str, ...]:
+    """Return schema failure locations without retaining model output values."""
+    diagnostics: list[str] = []
+    for item in error.errors(include_url=False, include_context=False):
+        location = ".".join(str(part) for part in item.get("loc", ())) or "$"
+        error_type = str(item.get("type", "validation_error"))
+        diagnostics.append(f"output_field={location};type={error_type}")
+        if len(diagnostics) >= MAX_SAFE_DIAGNOSTIC_LINES:
+            break
+    return tuple(diagnostics)
 
 
 def _process_group_options() -> dict[str, Any]:
@@ -470,7 +484,11 @@ class CodexRunner:
             ) from exc
         try:
             return ReviewOutput.model_validate(payload)
-        except ValueError as exc:
-            raise CodexError(
-                "CODEX_OUTPUT_SCHEMA_MISMATCH", "Codex output did not match the review schema"
-            ) from exc
+        except ValidationError as exc:
+            error = CodexError(
+                "CODEX_OUTPUT_SCHEMA_MISMATCH",
+                "Codex output did not match the review schema",
+                signature="output_contract_mismatch",
+            )
+            error.safe_diagnostic = _validation_diagnostic(exc)
+            raise error from exc

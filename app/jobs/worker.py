@@ -27,6 +27,9 @@ FAILURE_MESSAGES = {
     "AUTH": "## 🔐 리뷰를 완료하지 못했습니다\n\n리뷰 엔진 인증을 사용할 수 없습니다.",
     "SERVICE": "## 🌐 리뷰 엔진에 일시적인 문제가 있습니다\n\n잠시 후 다시 시도해 주세요.",
     "INTERNAL": "## ⚠️ 리뷰를 완료하지 못했습니다\n\n내부 오류가 발생했습니다.",
+    "SCHEMA": (
+        "## 리뷰를 완료하지 못했습니다.\n\n구조화된 리뷰 결과가 출력 계약을 충족하지 않았습니다."
+    ),
 }
 
 
@@ -56,6 +59,10 @@ def failure_category(error: CodexError | Exception) -> str:
             "CODEX_AUTH": "AUTH",
             "CODEX_SERVICE_UNAVAILABLE": "SERVICE",
             "CODEX_TIMEOUT": "SERVICE",
+            "CODEX_OUTPUT_SCHEMA_MISMATCH": "SCHEMA",
+            "CODEX_OUTPUT_INVALID_JSON": "SCHEMA",
+            "CODEX_OUTPUT_MISSING": "SCHEMA",
+            "SCHEMA_ERROR": "SCHEMA",
         }.get(error.code, "INTERNAL")
     return "INTERNAL"
 
