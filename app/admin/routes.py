@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.auth import AdminPrincipal, csrf_token, require_admin, verify_csrf
-from app.admin.control_plane import resolve_repository_policy
+from app.admin.control_plane import resolve_repository_policy, set_processing_state
 from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.jobs.models import (
@@ -353,6 +353,118 @@ async def audit_log(
     )
 
 
+@router.get("/operations", response_class=HTMLResponse)
+async def operations_page(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    principal: AdminPrincipal = Depends(require_admin),
+) -> HTMLResponse:
+    value = await session.get(GlobalReviewSettings, 1)
+    if value is None:
+        value = GlobalReviewSettings(id=1, version=1)
+    pending = await session.scalar(
+        select(func.count(ReviewJob.id)).where(ReviewJob.status == JobStatus.PENDING)
+    )
+    running = await session.scalar(
+        select(func.count(ReviewJob.id)).where(ReviewJob.status == JobStatus.RUNNING)
+    )
+    last_change = await session.scalar(
+        select(AdminAuditLog)
+        .where(AdminAuditLog.target_type == "global_processing")
+        .order_by(AdminAuditLog.created_at.desc())
+        .limit(1)
+    )
+    return templates.TemplateResponse(
+        request,
+        "operations.html",
+        _context(
+            request,
+            principal,
+            settings,
+            global_settings=value,
+            pending_count=int(pending or 0),
+            running_count=int(running or 0),
+            last_change=last_change,
+        ),
+    )
+
+
+async def _change_processing(
+    request: Request,
+    *,
+    paused: bool,
+    csrf: str,
+    expected_version: int,
+    reason: str,
+    session: AsyncSession,
+    settings: Settings,
+    principal: AdminPrincipal,
+) -> RedirectResponse:
+    verify_csrf(csrf, principal, settings)
+    try:
+        await set_processing_state(
+            session,
+            paused=paused,
+            actor_login=principal.github_login,
+            reason=reason or "admin console",
+            expected_version=expected_version,
+        )
+    except ValueError as exc:
+        if str(exc) == "STALE_PROCESSING_VERSION":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "운영 상태가 다른 관리자에 의해 변경되었습니다. "
+                "페이지를 새로고침한 뒤 다시 시도하세요.",
+            ) from exc
+        raise
+    return RedirectResponse("/admin/operations?updated=1", status_code=303)
+
+
+@router.post("/operations/resume")
+async def resume_processing(
+    request: Request,
+    csrf: str = Form(..., alias="_csrf"),
+    expected_version: int = Form(...),
+    reason: str = Form("관리자 콘솔에서 재개"),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    principal: AdminPrincipal = Depends(require_admin),
+) -> RedirectResponse:
+    return await _change_processing(
+        request,
+        paused=False,
+        csrf=csrf,
+        expected_version=expected_version,
+        reason=reason,
+        session=session,
+        settings=settings,
+        principal=principal,
+    )
+
+
+@router.post("/operations/pause")
+async def pause_processing(
+    request: Request,
+    csrf: str = Form(..., alias="_csrf"),
+    expected_version: int = Form(...),
+    reason: str = Form("관리자 콘솔에서 일시중지"),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    principal: AdminPrincipal = Depends(require_admin),
+) -> RedirectResponse:
+    return await _change_processing(
+        request,
+        paused=True,
+        csrf=csrf,
+        expected_version=expected_version,
+        reason=reason,
+        session=session,
+        settings=settings,
+        principal=principal,
+    )
+
+
 @router.post("/settings")
 async def update_global_settings(
     request: Request,
@@ -368,7 +480,6 @@ async def update_global_settings(
     enabled: bool = Form(False),
     auto_review_enabled: bool = Form(False),
     command_review_enabled: bool = Form(False),
-    processing_paused: bool | None = Form(None),
     include_low_severity: bool = Form(False),
     minimum_severity: str = Form("MEDIUM"),
     enabled_categories: str = Form(""),
@@ -424,8 +535,6 @@ async def update_global_settings(
         value.auto_review_enabled = auto_review_enabled
     if submitted("command_review_enabled"):
         value.command_review_enabled = command_review_enabled
-    if submitted("processing_paused") and processing_paused is not None:
-        value.processing_paused = processing_paused
     if submitted("language"):
         value.language = language
     if submitted("review_profile"):

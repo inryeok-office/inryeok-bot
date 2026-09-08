@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.jobs.models import (
+    AdminAuditLog,
     GlobalReviewSettings,
     RepositorySettings,
     ReviewJob,
@@ -445,6 +446,56 @@ def apply_global_policy_patch(
             global_settings.profile_defaults_inherited = False
             changed.append("profile_defaults_inherited")
     return tuple(changed)
+
+
+async def set_processing_state(
+    session: AsyncSession,
+    *,
+    paused: bool,
+    actor_login: str,
+    reason: str,
+    expected_version: int,
+) -> GlobalReviewSettings:
+    """Change only the queue gate, with an audited optimistic lock.
+
+    Repository policy columns are deliberately not touched here.  Both the
+    administrator route and operational CLI use this command so pause/resume
+    has one transaction and one audit contract.
+    """
+    value = await session.scalar(
+        select(GlobalReviewSettings).where(GlobalReviewSettings.id == 1).with_for_update()
+    )
+    if value is None:
+        value = GlobalReviewSettings(id=1, version=1)
+        session.add(value)
+        await session.flush()
+    current_version = int(value.version or 1)
+    if expected_version != current_version:
+        raise ValueError("STALE_PROCESSING_VERSION")
+    changed = bool(value.processing_paused) != paused
+    if changed:
+        value.processing_paused = paused
+        value.version = current_version + 1
+        value.updated_by = actor_login
+    else:
+        # Idempotent requests do not mutate the row or its version, but remain
+        # auditable so an operator can explain the request.
+        value.version = current_version
+    session.add(
+        AdminAuditLog(
+            actor_login=actor_login,
+            action="resume_processing" if not paused else "pause_processing",
+            target_type="global_processing",
+            target_id="1",
+            summary=(
+                f"processing_paused={'true' if paused else 'false'}; "
+                f"changed={'true' if changed else 'false'}; reason={reason[:240]}"
+            ),
+        )
+    )
+    await session.commit()
+    await session.refresh(value)
+    return value
 
 
 @dataclass(frozen=True)

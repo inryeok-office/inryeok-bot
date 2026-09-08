@@ -17,7 +17,7 @@
         <a href="/admin/repositories" {% if request.url.path.startswith('/admin/repositories') %}aria-current="page"{% endif %}>저장소</a>
         <a href="/admin/jobs" {% if request.url.path.startswith('/admin/jobs') %}aria-current="page"{% endif %}>리뷰 작업</a>
         <a href="/admin/audit" {% if request.url.path == '/admin/audit' %}aria-current="page"{% endif %}>이벤트 · 감사</a>
-        <a href="/admin#operations">운영</a>
+        <a href="/admin/operations" {% if request.url.path.startswith('/admin/operations') %}aria-current="page"{% endif %}>운영</a>
         <a href="/admin/settings" {% if request.url.path == '/admin/settings' %}aria-current="page"{% endif %}>설정</a>
       </nav>
       <div class="sidebar-footer"><span class="muted-label">로그인 사용자</span><strong>{{ principal.github_login }}</strong><form method="post" action="/auth/github/logout"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="button ghost" type="submit">로그아웃</button></form></div>
