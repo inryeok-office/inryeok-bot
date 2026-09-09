@@ -143,6 +143,45 @@ class FakeProcess:
 
 
 @pytest.mark.asyncio
+async def test_codex_runner_accepts_one_json_markdown_fence(monkeypatch, tmp_path) -> None:
+    class FencedProcess(FakeProcess):
+        async def communicate(self, prompt: bytes) -> tuple[bytes, bytes]:
+            del prompt
+            return b'```json\n{"summary":"ok","findings":[]}\n```\n', b""
+
+    async def create(*args: object, **kwargs: object) -> FencedProcess:
+        del args, kwargs
+        return FencedProcess()
+
+    monkeypatch.setattr("app.codex.runner.asyncio.create_subprocess_exec", create)
+    result = await CodexRunner(Settings(environment="test", codex_command="codex")).run(
+        tmp_path, "review this"
+    )
+    assert result.summary == "ok"
+
+
+@pytest.mark.asyncio
+async def test_codex_runner_rejects_json_embedded_in_prose(monkeypatch, tmp_path) -> None:
+    class ProseProcess(FakeProcess):
+        async def communicate(self, prompt: bytes) -> tuple[bytes, bytes]:
+            del prompt
+            return b'Here is the review:\n{"summary":"ok","findings":[]}\n', b""
+
+    async def create(*args: object, **kwargs: object) -> ProseProcess:
+        del args, kwargs
+        return ProseProcess()
+
+    monkeypatch.setattr("app.codex.runner.asyncio.create_subprocess_exec", create)
+    from app.codex.runner import CodexError
+
+    with pytest.raises(CodexError) as raised:
+        await CodexRunner(Settings(environment="test", codex_command="codex")).run(
+            tmp_path, "review this"
+        )
+    assert raised.value.code == "CODEX_OUTPUT_INVALID_JSON"
+
+
+@pytest.mark.asyncio
 async def test_codex_runner_reports_safe_output_contract_location(monkeypatch, tmp_path) -> None:
     class InvalidProcess(FakeProcess):
         async def communicate(self, prompt: bytes) -> tuple[bytes, bytes]:

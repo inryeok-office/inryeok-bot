@@ -103,6 +103,22 @@ def _error_text(stdout: bytes, stderr: bytes) -> str:
     return "\n".join(parts).casefold()
 
 
+def _parse_structured_output(stdout: bytes) -> object:
+    """Parse JSON while accepting one complete Markdown JSON fence.
+
+    Some CLI/model combinations wrap otherwise valid structured output in a
+    single Markdown fence. This narrow normalization does not extract JSON
+    from surrounding prose and still leaves contract validation to Pydantic.
+    """
+    text = stdout.decode("utf-8")
+    candidate = text.strip()
+    if candidate.startswith("```") and candidate.endswith("```"):
+        first_line, separator, body = candidate.partition("\n")
+        if separator and first_line[3:].strip().casefold() in {"", "json"}:
+            candidate = body[:-3].rstrip()
+    return json.loads(candidate)
+
+
 def redact_diagnostic(
     stdout: bytes,
     stderr: bytes,
@@ -477,8 +493,8 @@ class CodexRunner:
         if not stdout.strip():
             raise CodexError("CODEX_OUTPUT_MISSING", "Codex returned no structured output")
         try:
-            payload = json.loads(stdout)
-        except json.JSONDecodeError as exc:
+            payload = _parse_structured_output(stdout)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise CodexError(
                 "CODEX_OUTPUT_INVALID_JSON", "Codex returned invalid JSON output"
             ) from exc
