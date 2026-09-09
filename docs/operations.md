@@ -17,6 +17,12 @@ Production ingress uses host Nginx with Certbot. Compose Caddy is disabled by
 default and retained only under the `legacy-caddy` profile for rollback; its
 data/config volumes must be preserved.
 
+The Codex executor is installed in a separate virtualenv and is not rebuilt by
+the web/worker image build. After changing `app/codex` or the review schema,
+run `sudo scripts/sync_executor_runtime.sh` before restarting web/worker. The
+command installs only the local package, restarts the executor unit, verifies it
+is active, and prints source/package hashes without exposing source or secrets.
+
 ## Database backup and restore
 
 Create a Git-ignored `backups` directory in the Compose project.
