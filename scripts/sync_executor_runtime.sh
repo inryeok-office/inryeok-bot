@@ -19,6 +19,13 @@ fi
 systemctl restart "${SERVICE}"
 systemctl is-active --quiet "${SERVICE}"
 
+# The socket lives in systemd's RuntimeDirectory.  Recreating it after the
+# worker bind mount exists can leave the container seeing the old directory
+# inode, so refresh the two consumers after every executor restart.
+if command -v docker >/dev/null 2>&1 && [[ -f "${APP_ROOT}/compose.yml" ]]; then
+  (cd "${APP_ROOT}" && docker compose up -d --force-recreate web worker >/dev/null)
+fi
+
 # Hashes are safe deployment evidence; source and credentials are not printed.
 sha256sum \
   "${APP_ROOT}/app/codex/runner.py" \
