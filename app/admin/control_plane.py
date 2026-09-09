@@ -498,6 +498,87 @@ async def set_processing_state(
     return value
 
 
+async def update_global_policy(
+    session: AsyncSession,
+    *,
+    patch: Mapping[str, Any],
+    settings: Settings,
+    actor_login: str,
+    reason: str,
+    expected_version: int | None,
+) -> GlobalReviewSettings:
+    """Apply a validated global policy patch through one audited writer."""
+    if expected_version is None:
+        raise ValueError("MISSING_GLOBAL_SETTINGS_VERSION")
+    value = await session.scalar(
+        select(GlobalReviewSettings).where(GlobalReviewSettings.id == 1).with_for_update()
+    )
+    if value is None:
+        value = GlobalReviewSettings(id=1, version=1)
+        session.add(value)
+        await session.flush()
+    current_version = int(value.version or 1)
+    if expected_version != current_version:
+        raise ValueError("STALE_GLOBAL_SETTINGS_VERSION")
+    changed = apply_global_policy_patch(value, patch, settings)
+    if not changed:
+        await session.commit()
+        await session.refresh(value)
+        return value
+    value.version = current_version + 1
+    value.updated_by = actor_login
+    session.add(
+        AdminAuditLog(
+            actor_login=actor_login,
+            action="update",
+            target_type="global_settings",
+            target_id="1",
+            summary=f"fields={','.join(changed)}; reason={reason[:240]}",
+        )
+    )
+    await session.commit()
+    await session.refresh(value)
+    return value
+
+
+async def update_repository_policy(
+    session: AsyncSession,
+    *,
+    repository: RepositorySettings,
+    patch: Mapping[str, Any],
+    settings: Settings,
+    actor_login: str,
+    reason: str,
+    expected_version: int | None,
+) -> RepositorySettings:
+    """Apply a repository policy patch through one audited writer."""
+    if expected_version is None:
+        raise ValueError("MISSING_REPOSITORY_SETTINGS_VERSION")
+    locked = await session.scalar(
+        select(RepositorySettings).where(RepositorySettings.id == repository.id).with_for_update()
+    )
+    if locked is None:
+        raise ValueError("REPOSITORY_NOT_FOUND")
+    current_version = int(locked.version or 1)
+    if expected_version != current_version:
+        raise ValueError("STALE_REPOSITORY_SETTINGS_VERSION")
+    changed = apply_repository_policy_patch(locked, patch, settings)
+    if changed:
+        locked.version = current_version + 1
+        session.add(
+            AdminAuditLog(
+                actor_login=actor_login,
+                action="update",
+                target_type="repository_settings",
+                target_id=str(locked.id),
+                summary=f"fields={','.join(changed)}; reason={reason[:240]}",
+            )
+        )
+    await session.commit()
+    await session.refresh(locked)
+    return locked
+
+
 @dataclass(frozen=True)
 class RepositorySummary:
     repository_id: int

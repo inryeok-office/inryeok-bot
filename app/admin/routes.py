@@ -10,7 +10,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.auth import AdminPrincipal, csrf_token, require_admin, verify_csrf
-from app.admin.control_plane import resolve_repository_policy, set_processing_state
+from app.admin.control_plane import (
+    resolve_repository_policy,
+    set_processing_state,
+    update_global_policy,
+    update_repository_policy,
+)
+from app.admin.metrics import usage_metrics
 from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.jobs.models import (
@@ -24,7 +30,7 @@ from app.jobs.models import (
 )
 from app.jobs.repository import JobRepository
 from app.review.domains import PROMPT_VERSION, effective_domains
-from app.review.settings import PROFILE_DEFAULTS, validate_choice, validate_paths
+from app.review.settings import validate_choice, validate_paths
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -139,6 +145,7 @@ async def index(
         )
         for status in JobStatus
     }
+    metrics = await usage_metrics(session, 1)
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -150,6 +157,30 @@ async def index(
             repositories=repositories,
             global_settings=global_settings,
             job_counts=job_counts,
+            usage_metrics=metrics,
+        ),
+    )
+
+
+@router.get("/usage", response_class=HTMLResponse)
+async def usage_page(
+    request: Request,
+    period: int = 1,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    principal: AdminPrincipal = Depends(require_admin),
+) -> HTMLResponse:
+    """Render persisted review usage without exposing sensitive execution data."""
+    metrics = await usage_metrics(session, period)
+    return templates.TemplateResponse(
+        request,
+        "usage.html",
+        _context(
+            request,
+            principal,
+            settings,
+            usage_metrics=metrics,
+            selected_period=metrics.period_days,
         ),
     )
 
@@ -516,90 +547,55 @@ async def update_global_settings(
             raise ValueError("setting outside safety limit")
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    value = await session.get(GlobalReviewSettings, 1) or GlobalReviewSettings(id=1)
-    session.add(value)
-    current_version = value.version or 1
-    if expected_version is not None and expected_version != current_version:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "설정이 다른 관리자에 의해 변경되었습니다. 새로고침 후 다시 저장하세요.",
-        )
     form = await request.form() if request is not None else None
 
     def submitted(name: str) -> bool:
         return form is not None and name in form
 
-    if submitted("enabled"):
-        value.enabled = enabled
-    if submitted("auto_review_enabled"):
-        value.auto_review_enabled = auto_review_enabled
-    if submitted("command_review_enabled"):
-        value.command_review_enabled = command_review_enabled
-    if submitted("language"):
-        value.language = language
-    if submitted("review_profile"):
-        value.review_profile = review_profile
-    if submitted("model"):
-        value.model = model or None
-    if submitted("reasoning_effort"):
-        value.reasoning_effort = reasoning_effort
-    if submitted("max_findings"):
-        value.max_findings = max_findings
-    if submitted("minimum_confidence"):
-        value.minimum_confidence = minimum_confidence
-    if submitted("codex_timeout_seconds"):
-        value.codex_timeout_seconds = codex_timeout_seconds
-    if submitted("include_low_severity"):
-        value.include_low_severity = include_low_severity
-    if submitted("ignored_paths"):
-        value.ignored_paths = ignored_paths
-    value.updated_by = principal.github_login
-    if submitted("minimum_severity"):
-        value.minimum_severity = minimum_severity.upper()
-    if submitted("enabled_categories"):
-        value.enabled_categories = enabled_categories
-    if submitted("review_domain_mode"):
-        value.review_domain_mode = review_domain_mode
-    if submitted("manual_review_domains"):
-        value.manual_review_domains = ",".join(manual_review_domains)
-    for field, submitted_name in (
-        ("review_on_opened", "review_on_opened"),
-        ("review_on_reopened", "review_on_reopened"),
-        ("review_on_ready_for_review", "review_on_ready_for_review"),
-        ("review_on_synchronize", "review_on_synchronize"),
-        ("synchronize_debounce_seconds", "synchronize_debounce_seconds"),
-        ("command_cooldown_seconds", "command_cooldown_seconds"),
-    ):
-        if submitted(submitted_name):
-            setattr(value, field, locals()[field])
-    if any(
-        submitted(name)
-        for name in (
-            "review_profile",
-            "minimum_confidence",
-            "minimum_severity",
-            "max_findings",
-            "include_low_severity",
-        )
-    ):
-        profile_default = PROFILE_DEFAULTS[review_profile]
-        value.profile_defaults_inherited = (
-            value.minimum_confidence == profile_default.minimum_confidence
-            and value.minimum_severity.upper() == profile_default.minimum_severity
-            and value.max_findings == profile_default.max_findings
-            and value.include_low_severity == profile_default.include_low_severity
-        )
-    value.version = current_version + 1
-    session.add(
-        AdminAuditLog(
+    patch: dict[str, Any] = {}
+    values: dict[str, Any] = {
+        "enabled": enabled,
+        "auto_review_enabled": auto_review_enabled,
+        "command_review_enabled": command_review_enabled,
+        "language": language,
+        "review_profile": review_profile,
+        "model": model or None,
+        "reasoning_effort": reasoning_effort,
+        "max_findings": max_findings,
+        "minimum_confidence": minimum_confidence,
+        "codex_timeout_seconds": codex_timeout_seconds,
+        "include_low_severity": include_low_severity,
+        "ignored_paths": ignored_paths,
+        "minimum_severity": minimum_severity.upper(),
+        "enabled_categories": enabled_categories,
+        "review_domain_mode": review_domain_mode,
+        "manual_review_domains": manual_review_domains,
+        "review_on_opened": review_on_opened,
+        "review_on_reopened": review_on_reopened,
+        "review_on_ready_for_review": review_on_ready_for_review,
+        "review_on_synchronize": review_on_synchronize,
+        "synchronize_debounce_seconds": synchronize_debounce_seconds,
+        "command_cooldown_seconds": command_cooldown_seconds,
+    }
+    for name, value in values.items():
+        if submitted(name):
+            patch[name] = value
+    try:
+        await update_global_policy(
+            session,
+            patch=patch,
+            settings=settings,
             actor_login=principal.github_login,
-            action="update",
-            target_type="global_settings",
-            target_id="1",
-            summary="Updated review defaults",
+            reason="admin settings form",
+            expected_version=expected_version,
         )
-    )
-    await session.commit()
+    except ValueError as exc:
+        if str(exc) in {"STALE_GLOBAL_SETTINGS_VERSION", "MISSING_GLOBAL_SETTINGS_VERSION"}:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "설정이 다른 관리자에 의해 변경되었습니다. 새로고침 후 다시 저장하세요.",
+            ) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     return RedirectResponse("/admin/settings", status_code=303)
 
 
@@ -648,33 +644,27 @@ async def update_repository(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "repository not found")
     _ensure_allowed(repository.repository_owner, settings)
     await _require_repository_admin(repository, principal, settings)
-    current_version = repository.version or 1
-    if expected_version is not None and expected_version != current_version:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "저장소 설정이 변경되었습니다. 새로고침 후 다시 저장하세요."
-        )
     # A settings form is allowed to update one section at a time.  In
     # particular, unchecked checkboxes are absent from an HTML form; treating
     # an absent field as false silently overwrites unrelated settings.
     form = await request.form()
+    policy_patch: dict[str, Any] = {}
 
     def present(name: str) -> bool:
         return name in form
 
     if present("enabled"):
-        repository.enabled = enabled
+        policy_patch["override_enabled"] = enabled
     if present("auto_review"):
-        repository.auto_review = auto_review
+        policy_patch["override_auto_review_enabled"] = auto_review
     if present("min_confidence") and min_confidence is not None:
-        repository.min_confidence = max(0, min(1, min_confidence))
+        policy_patch["override_minimum_confidence"] = min_confidence
     if present("max_findings") and max_findings is not None:
-        repository.max_findings = max(1, min(50, max_findings))
+        policy_patch["override_max_findings"] = max_findings
     if present("include_low_severity"):
-        repository.include_low_severity = include_low_severity
-    if present("ignore_draft"):
-        repository.ignore_draft = ignore_draft
+        policy_patch["override_include_low_severity"] = include_low_severity
     if present("ignore_patterns"):
-        repository.ignore_patterns = ignore_patterns
+        policy_patch["override_ignored_paths"] = ignore_patterns
     try:
         validate_choice(
             override_language or "ko",
@@ -684,35 +674,41 @@ async def update_repository(
             override_reasoning_effort or "medium",
         )
         if present("override_enabled"):
-            repository.override_enabled = _optional_bool(override_enabled)
+            policy_patch["override_enabled"] = _optional_bool(override_enabled)
         if present("override_auto_review_enabled"):
-            repository.override_auto_review_enabled = _optional_bool(override_auto_review_enabled)
+            policy_patch["override_auto_review_enabled"] = _optional_bool(
+                override_auto_review_enabled
+            )
         if present("override_command_review_enabled"):
-            repository.override_command_review_enabled = _optional_bool(
+            policy_patch["override_command_review_enabled"] = _optional_bool(
                 override_command_review_enabled
             )
         if present("override_language"):
-            repository.override_language = override_language or None
+            policy_patch["override_language"] = override_language or None
         if present("override_review_profile"):
-            repository.override_review_profile = override_review_profile or None
+            policy_patch["override_review_profile"] = override_review_profile or None
         if present("override_model"):
-            repository.override_model = override_model or None
+            policy_patch["override_model"] = override_model or None
         if present("override_reasoning_effort"):
-            repository.override_reasoning_effort = override_reasoning_effort or None
+            policy_patch["override_reasoning_effort"] = override_reasoning_effort or None
         if present("override_max_findings"):
-            repository.override_max_findings = _optional_int(override_max_findings, 1, 50)
+            policy_patch["override_max_findings"] = _optional_int(override_max_findings, 1, 50)
         if present("override_minimum_confidence"):
-            repository.override_minimum_confidence = _optional_float(
+            policy_patch["override_minimum_confidence"] = _optional_float(
                 override_minimum_confidence, 0.8, 1
             )
         if present("override_include_low_severity"):
-            repository.override_include_low_severity = _optional_bool(override_include_low_severity)
+            policy_patch["override_include_low_severity"] = _optional_bool(
+                override_include_low_severity
+            )
         if present("override_ignored_paths"):
-            repository.override_ignored_paths = override_ignored_paths or None
-            if repository.override_ignored_paths is not None:
-                validate_paths(repository.override_ignored_paths)
+            policy_patch["override_ignored_paths"] = override_ignored_paths or None
+            if policy_patch["override_ignored_paths"] is not None:
+                validate_paths(str(policy_patch["override_ignored_paths"]))
         if present("override_timeout_seconds"):
-            repository.override_timeout_seconds = _optional_int(override_timeout_seconds, 30, 3600)
+            policy_patch["override_timeout_seconds"] = _optional_int(
+                override_timeout_seconds, 30, 3600
+            )
         if present("override_minimum_severity"):
             if override_minimum_severity and override_minimum_severity not in {
                 "CRITICAL",
@@ -721,46 +717,54 @@ async def update_repository(
                 "LOW",
             }:
                 raise ValueError("unsupported minimum severity")
-            repository.override_minimum_severity = override_minimum_severity or None
+            policy_patch["override_minimum_severity"] = override_minimum_severity or None
         if present("override_enabled_categories"):
-            repository.override_enabled_categories = override_enabled_categories or None
+            policy_patch["override_enabled_categories"] = override_enabled_categories or None
         for event in ("opened", "reopened", "ready_for_review", "synchronize"):
             name = f"override_review_on_{event}"
             if present(name):
-                setattr(repository, name, _optional_bool(locals()[name]))
+                policy_patch[name] = _optional_bool(locals()[name])
         if present("override_synchronize_debounce_seconds"):
-            repository.override_synchronize_debounce_seconds = _optional_int(
+            policy_patch["override_synchronize_debounce_seconds"] = _optional_int(
                 override_synchronize_debounce_seconds, 0, 3600
             )
         if present("override_command_cooldown_seconds"):
-            repository.override_command_cooldown_seconds = _optional_int(
+            policy_patch["override_command_cooldown_seconds"] = _optional_int(
                 override_command_cooldown_seconds, 0, 3600
             )
         if present("override_review_domain_mode"):
             if override_review_domain_mode not in {"inherit", "AUTO", "MANUAL"}:
                 raise ValueError("unsupported review domain mode")
-            repository.override_review_domain_mode = (
+            policy_patch["override_review_domain_mode"] = (
                 None if override_review_domain_mode == "inherit" else override_review_domain_mode
             )
         if present("override_manual_review_domains"):
-            repository.override_manual_review_domains = (
+            policy_patch["override_manual_review_domains"] = (
                 ",".join(override_manual_review_domains) or None
             )
-        if repository.override_review_domain_mode == "MANUAL":
-            effective_domains("MANUAL", repository.override_manual_review_domains, None)
+        if policy_patch.get("override_review_domain_mode") == "MANUAL":
+            effective_domains(
+                "MANUAL", str(policy_patch.get("override_manual_review_domains") or ""), None
+            )
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    repository.version = current_version + 1
-    session.add(
-        AdminAuditLog(
+    try:
+        await update_repository_policy(
+            session,
+            repository=repository,
+            patch=policy_patch,
+            settings=settings,
             actor_login=principal.github_login,
-            action="update",
-            target_type="repository_settings",
-            target_id=str(repository.id),
-            summary="Updated legacy repository review controls",
+            reason="admin repository settings form",
+            expected_version=expected_version,
         )
-    )
-    await session.commit()
+    except ValueError as exc:
+        if str(exc) in {"STALE_REPOSITORY_SETTINGS_VERSION", "MISSING_REPOSITORY_SETTINGS_VERSION"}:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "저장소 설정이 변경되었습니다. 새로고침 후 다시 저장하세요.",
+            ) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     return RedirectResponse(f"/admin/repositories/{repository.id}", status_code=303)
 
 
