@@ -266,7 +266,41 @@ class ReviewService:
                         job.pull_request_number,
                         payload,
                     )
-                except (GitHubAPIError, httpx.TimeoutException, httpx.NetworkError):
+                except GitHubAPIError as exc:
+                    # GitHub rejects the entire review when any one inline
+                    # location is no longer valid.  Preserve the review
+                    # result by retrying once as a summary-only review; do
+                    # not use this fallback for auth/permission/rate-limit
+                    # failures, and never invent a line location.
+                    if exc.status_code != 422 or not payload.get("comments"):
+                        raise
+                    fallback_payload = build_review_payload(
+                        findings,
+                        len(changed),
+                        job.head_sha,
+                        job.trigger_type in {TriggerType.COMMAND, TriggerType.RETRY},
+                        effective.language,
+                        marker,
+                        {
+                            "new": len(raw_fingerprints - prior_fingerprints),
+                            "still": len(raw_fingerprints & prior_fingerprints),
+                            "not_detected": max(0, len(prior_fingerprints - raw_fingerprints)),
+                        },
+                        include_inline_comments=False,
+                    )
+                    logger.warning(
+                        "GitHub rejected inline review locations; retrying summary-only "
+                        "review job=%s safe_category=GITHUB_INVALID_LOCATION",
+                        job.id,
+                    )
+                    posted = await self.github.create_review(
+                        job.installation_id,
+                        job.repository_owner,
+                        job.repository_name,
+                        job.pull_request_number,
+                        fallback_payload,
+                    )
+                except (httpx.TimeoutException, httpx.NetworkError):
                     recovered_reviews = await self.github.list_reviews(
                         job.installation_id,
                         job.repository_owner,

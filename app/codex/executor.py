@@ -113,6 +113,13 @@ def _execution_record_path(execution_id: str) -> Path:
     return _execution_state_root() / f"{execution_id}.json"
 
 
+def _execution_record_exists(execution_id: str) -> bool:
+    try:
+        return _execution_record_path(execution_id).exists()
+    except OSError:
+        return False
+
+
 def _read_execution_record(execution_id: str) -> dict[str, object] | None:
     try:
         value = json.loads(_execution_record_path(execution_id).read_text(encoding="utf-8"))
@@ -121,7 +128,7 @@ def _read_execution_record(execution_id: str) -> dict[str, object] | None:
     return value if isinstance(value, dict) else None
 
 
-def _write_execution_record(record: dict[str, object]) -> None:
+def _write_execution_record(record: dict[str, object]) -> bool:
     root = _execution_state_root()
     try:
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -143,10 +150,13 @@ def _write_execution_record(record: dict[str, object]) -> None:
         records = sorted(root.glob("*.json"), key=lambda item: item.stat().st_mtime)
         for candidate in records[: max(0, len(records) - MAX_EXECUTION_RECORDS)]:
             candidate.unlink(missing_ok=True)
+        return True
     except OSError:
-        # The in-memory guard remains available for development/test setups
-        # where the production executor state directory is not writable.
+        # Never run without a durable idempotency record.  A process which
+        # completes without this record cannot be safely recovered after a
+        # socket or executor restart.
         logger.warning("executor durable execution state unavailable")
+        return False
 
 
 def _response_content(response: JSONResponse) -> dict[str, object]:
@@ -165,20 +175,19 @@ async def health() -> dict[str, str]:
 @app.post("/review", response_model=None)
 async def review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
     request_hash = _request_fingerprint(request)
-    # Preserve the immediate-process response contract: a second concurrent
-    # submission is a duplicate, while a new executor process can consult the
-    # durable record below and return a completed result safely.
-    if request.execution_id in _seen_execution_ids:
+    prior = _read_execution_record(request.execution_id)
+    if prior is None and _execution_record_exists(request.execution_id):
+        # A corrupt/partial record is an unknown outcome.  Do not start a
+        # second Codex process merely because the durable result is unreadable.
         return JSONResponse(
             status_code=409,
             content={
-                "error_code": "EXECUTION_ALREADY_SEEN",
+                "error_code": "EXECUTION_RESULT_UNAVAILABLE",
                 "retryable": False,
                 "stage": "dedupe",
-                "error": "execution already processed",
+                "error": "execution result is unavailable",
             },
         )
-    prior = _read_execution_record(request.execution_id)
     if prior is not None:
         if prior.get("request_fingerprint") != request_hash:
             return JSONResponse(
@@ -203,26 +212,46 @@ async def review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
                     "error": "execution is already in progress",
                 },
             )
-        if state == "FAILED_FINAL" and isinstance(prior.get("error"), dict):
+        if state in {"FAILED_FINAL", "FAILED_RETRYABLE"} and isinstance(prior.get("error"), dict):
             error = prior["error"]
             stored_status = prior.get("status_code")
             status_code = stored_status if isinstance(stored_status, int) else 500
             return JSONResponse(status_code=status_code, content=error)
+    if request.execution_id in _seen_execution_ids:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error_code": "EXECUTION_IN_PROGRESS",
+                "retryable": False,
+                "stage": "dedupe",
+                "error": "execution is already in progress",
+            },
+        )
     if _execution_lock.locked():
         raise HTTPException(status_code=429, detail="executor busy")
     _seen_execution_ids.add(request.execution_id)
-    _write_execution_record(
+    if not _write_execution_record(
         {
             "execution_id": request.execution_id,
             "request_fingerprint": request_hash,
             "state": "RUNNING",
         }
-    )
+    ):
+        _seen_execution_ids.discard(request.execution_id)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error_code": "EXECUTOR_STATE_UNAVAILABLE",
+                "retryable": False,
+                "stage": "durable_state",
+                "error": "executor state is unavailable",
+            },
+        )
     async with _execution_lock:
         result = await _run_review(request)
         if isinstance(result, JSONResponse):
             error = _response_content(result)
-            _write_execution_record(
+            persisted = _write_execution_record(
                 {
                     "execution_id": request.execution_id,
                     "request_fingerprint": request_hash,
@@ -232,13 +261,23 @@ async def review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
                 }
             )
         else:
-            _write_execution_record(
+            persisted = _write_execution_record(
                 {
                     "execution_id": request.execution_id,
                     "request_fingerprint": request_hash,
                     "state": "SUCCEEDED",
                     "result": result,
                 }
+            )
+        if not persisted:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error_code": "EXECUTOR_RESULT_NOT_DURABLE",
+                    "retryable": False,
+                    "stage": "durable_state",
+                    "error": "executor result could not be persisted",
+                },
             )
         return result
 

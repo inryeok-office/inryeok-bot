@@ -4,6 +4,7 @@ import tarfile
 
 import httpx
 import pytest
+from fastapi.responses import JSONResponse
 
 from app.codex.executor import (
     ReviewRequest,
@@ -219,7 +220,7 @@ async def test_executor_uses_dedicated_workspace_root(monkeypatch, tmp_path) -> 
 
 
 @pytest.mark.asyncio
-async def test_executor_rejects_duplicate_execution_id(monkeypatch, tmp_path) -> None:
+async def test_executor_reuses_duplicate_execution_id_result(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("CODEX_EXECUTION_STATE_DIR", str(tmp_path / "executions"))
     monkeypatch.setattr("app.codex.executor._seen_execution_ids", set())
     request = ReviewRequest(
@@ -236,7 +237,7 @@ async def test_executor_rejects_duplicate_execution_id(monkeypatch, tmp_path) ->
     second = await review(request)
 
     assert first == {"summary": "ok", "findings": []}
-    assert second.status_code == 409
+    assert second == {"summary": "ok", "findings": []}
 
 
 @pytest.mark.asyncio
@@ -281,3 +282,55 @@ async def test_executor_rejects_execution_id_fingerprint_conflict(monkeypatch, t
     monkeypatch.setattr("app.codex.executor._seen_execution_ids", set())
     result = await review(second)
     assert result.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_executor_does_not_rerun_corrupt_durable_record(monkeypatch, tmp_path) -> None:
+    state_dir = tmp_path / "executions"
+    state_dir.mkdir()
+    monkeypatch.setenv("CODEX_EXECUTION_STATE_DIR", str(state_dir))
+    monkeypatch.setattr("app.codex.executor._seen_execution_ids", set())
+    request = ReviewRequest(
+        archive=base64.b64encode(_archive()).decode(),
+        prompt="corrupt result",
+        execution_id="corrupt-execution-123",
+    )
+    (state_dir / f"{request.execution_id}.json").write_text("{not-json", encoding="utf-8")
+    calls = 0
+
+    async def fake_run(_: ReviewRequest) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"summary": "should not run", "findings": []}
+
+    monkeypatch.setattr("app.codex.executor._run_review", fake_run)
+    result = await review(request)
+    assert result.status_code == 409
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_executor_reuses_durable_failed_result(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CODEX_EXECUTION_STATE_DIR", str(tmp_path / "executions"))
+    monkeypatch.setattr("app.codex.executor._seen_execution_ids", set())
+    request = ReviewRequest(
+        archive=base64.b64encode(_archive()).decode(),
+        prompt="failed result",
+        execution_id="failed-execution-123",
+    )
+    calls = 0
+
+    async def fake_run(_: ReviewRequest) -> JSONResponse:
+        nonlocal calls
+        calls += 1
+        return JSONResponse(
+            status_code=503,
+            content={"error_code": "CODEX_SERVICE_UNAVAILABLE", "retryable": True},
+        )
+
+    monkeypatch.setattr("app.codex.executor._run_review", fake_run)
+    first = await review(request)
+    second = await review(request)
+    assert first.status_code == 503
+    assert second.status_code == 503
+    assert calls == 1

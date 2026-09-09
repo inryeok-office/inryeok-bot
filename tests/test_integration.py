@@ -109,6 +109,65 @@ async def test_fake_end_to_end_worker_pipeline(app_client, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_invalid_inline_location_falls_back_to_summary_review(
+    app_client, monkeypatch
+) -> None:
+    _, factory = app_client
+    monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
+
+    class InlineRejectingGitHub(FakeGitHub):
+        attempts = 0
+
+        async def create_review(self, *args: object) -> dict[str, int]:
+            self.attempts += 1
+            self.payload = args[-1]
+            if self.attempts == 1:
+                raise GitHubAPIError(422, "GITHUB_API_ERROR")
+            return {"id": 5_107_673_582}
+
+    async with factory() as session:
+        session.add(
+            RepositorySettings(
+                installation_id=1,
+                repository_owner="acme",
+                repository_name="repo",
+            )
+        )
+        job = ReviewJob(
+            delivery_id="inline-fallback",
+            installation_id=1,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=8,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.AUTO,
+        )
+        session.add(job)
+        await session.commit()
+        github = InlineRejectingGitHub()
+        output = ReviewOutput(
+            summary="line issue",
+            findings=[
+                Finding(
+                    path="app.py",
+                    line=2,
+                    category=Category.NULL_SAFETY,
+                    severity=Severity.HIGH,
+                    confidence=0.95,
+                    title="Crash",
+                    body="This dereferences None.",
+                )
+            ],
+        )
+        await ReviewService(session, github, FakeRunner(output)).execute(job)  # type: ignore[arg-type]
+        run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == job.id))
+        assert run and run.github_review_id == 5_107_673_582
+        assert github.attempts == 2
+        assert github.payload["comments"] == []
+
+
+@pytest.mark.asyncio
 async def test_file_and_pr_findings_publish_in_review_summary(app_client, monkeypatch) -> None:
     _, factory = app_client
     monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)

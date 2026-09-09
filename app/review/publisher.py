@@ -57,9 +57,14 @@ def build_review_payload(
     language: str = "ko",
     marker: str = "v1",
     comparison: dict[str, int] | None = None,
+    include_inline_comments: bool = True,
 ) -> dict[str, Any]:
-    inline_findings = [item for item in findings if item.scope.value == "LINE"]
-    summary_findings = [item for item in findings if item.scope.value != "LINE"]
+    inline_findings = [
+        item for item in findings if include_inline_comments and item.scope.value == "LINE"
+    ]
+    summary_findings = [
+        item for item in findings if item.scope.value != "LINE" or not include_inline_comments
+    ]
     counts = Counter(item.severity.value for item in findings)
     table = "\n".join(
         f"| {_SEVERITY_LABELS[severity]} | {counts.get(severity, 0)} |"
