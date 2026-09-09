@@ -42,7 +42,7 @@ async def audit() -> None:
                     "head_sha": job.head_sha[:8],
                     "error_code": job.error_code,
                     "codex_exit_code": job.codex_exit_code,
-                    "execution_id": None,
+                    "execution_id": job.execution_id,
                 }
             )
         counts = {status.value: 0 for status in JobStatus}
