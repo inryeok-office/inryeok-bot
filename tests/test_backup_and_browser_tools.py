@@ -9,6 +9,7 @@ def test_backup_restore_script_is_fail_closed_and_does_not_prune_volumes() -> No
     assert "docker volume prune" not in script
     assert "docker compose down -v" not in script
     assert "POSTGRES_IMAGE" in script
+    assert "POSTGRES_MAJOR_VERSION" in script
     assert "docker image inspect" in script
     assert "ON_ERROR_STOP=1" in script
     assert "alembic_version" in script

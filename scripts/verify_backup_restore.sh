@@ -7,6 +7,7 @@ set -Eeuo pipefail
 
 BACKUP_FILE="${1:-}"
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:17-alpine}"
+POSTGRES_MAJOR_VERSION="${POSTGRES_MAJOR_VERSION:-17}"
 KEEP_TEMP="${KEEP_TEMP:-0}"
 LOCK_DIR="${TMPDIR:-/tmp}/inryeok-bot-backup-restore.lock"
 
@@ -20,6 +21,10 @@ if [[ ! -f "$BACKUP_FILE" || ! -r "$BACKUP_FILE" ]]; then
 fi
 if [[ ! "$KEEP_TEMP" =~ ^[01]$ ]]; then
   echo "KEEP_TEMP must be 0 or 1" >&2
+  exit 2
+fi
+if [[ ! "$POSTGRES_MAJOR_VERSION" =~ ^[0-9]+$ ]]; then
+  echo "POSTGRES_MAJOR_VERSION must be numeric" >&2
   exit 2
 fi
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 2; }
@@ -76,6 +81,13 @@ for _ in $(seq 1 60); do
 done
 if [[ "$ready" != 1 ]]; then
   echo "temporary postgres did not become ready" >&2
+  exit 1
+fi
+
+server_major="$(docker exec "$container" psql -Atq -U reviewbot -d reviewbot \
+  -c "SELECT split_part(current_setting('server_version'), '.', 1);" 2>/dev/null || true)"
+if [[ "$server_major" != "$POSTGRES_MAJOR_VERSION" ]]; then
+  echo "temporary postgres major version does not match the expected version" >&2
   exit 1
 fi
 
