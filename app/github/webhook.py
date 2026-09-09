@@ -408,8 +408,16 @@ async def github_webhook(
                 account_login=comment_event.repository.owner.login,
             )
             effective = await _effective_settings(session, repo_settings, settings)
-            if not effective.enabled or not effective.command_review_enabled:
+            # Keep manual command eligibility distinct from the repository's
+            # general enabled switch.  In particular, auto_review_enabled is
+            # intentionally not consulted here: operators may disable
+            # automatic PR events while still allowing an explicit /review.
+            # A stable reason is persisted on the delivery so an ignored
+            # command can be diagnosed without exposing the webhook payload.
+            if not effective.enabled:
                 return await ignored("repository_disabled")
+            if not effective.command_review_enabled:
+                return await ignored("manual_review_disabled")
             raw_pr = await github.get_pull_request(
                 comment_event.installation.id,
                 comment_event.repository.owner.login,

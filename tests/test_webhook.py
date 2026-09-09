@@ -174,6 +174,75 @@ async def test_pr_comment_command(app_client):
 
 
 @pytest.mark.asyncio
+async def test_manual_command_does_not_require_automatic_review(app_client):
+    client, factory = app_client
+    async with factory() as session:
+        session.add(
+            RepositorySettings(
+                installation_id=1,
+                repository_owner="acme",
+                repository_name="repo",
+                installed=True,
+                enabled=True,
+                auto_review=False,
+                override_auto_review_enabled=False,
+                override_command_review_enabled=True,
+            )
+        )
+        await session.commit()
+    payload = {
+        "action": "created",
+        "installation": {"id": 1},
+        "repository": {"name": "repo", "owner": {"login": "acme"}},
+        "sender": {"login": "alice"},
+        "issue": {"number": 7, "pull_request": {"url": "x"}},
+        "comment": {"id": 102, "body": "\r\n/review\r\n\r\n", "user": {"login": "alice"}},
+    }
+    body, headers = signed(payload, "issue_comment", "manual-auto-off")
+    response = await client.post("/webhooks/github", content=body, headers=headers)
+    assert response.json()["created"] is True
+    async with factory() as session:
+        job = await session.scalar(select(ReviewJob).where(ReviewJob.source_comment_id == 102))
+        assert job is not None
+
+
+@pytest.mark.asyncio
+async def test_manual_command_reports_manual_policy_disabled(app_client):
+    client, factory = app_client
+    async with factory() as session:
+        session.add(
+            RepositorySettings(
+                installation_id=1,
+                repository_owner="acme",
+                repository_name="repo",
+                installed=True,
+                enabled=True,
+                auto_review=True,
+                override_command_review_enabled=False,
+            )
+        )
+        await session.commit()
+    payload = {
+        "action": "created",
+        "installation": {"id": 1},
+        "repository": {"name": "repo", "owner": {"login": "acme"}},
+        "sender": {"login": "alice"},
+        "issue": {"number": 7, "pull_request": {"url": "x"}},
+        "comment": {"id": 103, "body": "/review", "user": {"login": "alice"}},
+    }
+    body, headers = signed(payload, "issue_comment", "manual-disabled")
+    response = await client.post("/webhooks/github", content=body, headers=headers)
+    assert response.json() == {"accepted": True, "ignored": "manual_review_disabled"}
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 0
+        delivery = await session.scalar(
+            select(WebhookDelivery).where(WebhookDelivery.delivery_id == "manual-disabled")
+        )
+        assert delivery is not None
+        assert delivery.safe_reason == "manual_review_disabled"
+
+
+@pytest.mark.asyncio
 async def test_installation_repository_sync(app_client):
     client, _ = app_client
     payload = {
