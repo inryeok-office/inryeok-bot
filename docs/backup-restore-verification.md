@@ -18,6 +18,10 @@ sudo POSTGRES_IMAGE=inryeok-postgres:17.7-gosu1.19 \
 마운트하지 않습니다. 검증이 끝나면 스크립트가 자신이 만든 컨테이너와
 volume만 제거합니다. 동시 실행은 lock directory로 차단합니다.
 
+Windows PowerShell 백업도 native stdout을 byte stream으로 저장합니다. 기존
+PowerShell의 `>` 리다이렉션은 Windows PowerShell에서 UTF-16 파일을 만들 수
+있으므로 사용하지 않습니다.
+
 ## 브라우저 smoke
 
 Playwright가 설치된 환경에서는 다음 read-only smoke를 실행할 수 있습니다.

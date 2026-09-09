@@ -17,6 +17,13 @@ def test_backup_restore_script_is_fail_closed_and_does_not_prune_volumes() -> No
     assert "volume rm \"$volume\"" in script
 
 
+def test_windows_backup_does_not_encode_sql_dump_as_utf16() -> None:
+    script = (ROOT / "scripts" / "backup_postgres.ps1").read_text(encoding="utf-8")
+    assert "StandardOutput.BaseStream.CopyTo" in script
+    assert "pg_dump" in script
+    assert " > $partialPath" not in script
+
+
 def test_admin_playwright_smoke_never_contains_credentials_or_write_actions() -> None:
     script = (ROOT / "scripts" / "admin_playwright_smoke.py").read_text(encoding="utf-8")
     assert "POST /" not in script
