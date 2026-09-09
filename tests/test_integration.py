@@ -97,6 +97,8 @@ async def test_fake_end_to_end_worker_pipeline(app_client, monkeypatch) -> None:
         await session.commit()
         github = FakeGitHub()
         await ReviewService(session, github, FakeRunner(output)).execute(job)  # type: ignore[arg-type]
+        assert job.execution_id is not None
+        assert len(job.execution_id) == 32
         run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == job.id))
         assert run and run.finding_count == 1 and run.github_review_id == 5_107_673_581
         assert run.raw_findings_count == 1

@@ -168,7 +168,16 @@ async def run_worker() -> None:
                 runner = ExecutorRunner(
                     settings.codex_executor_url, settings.review_timeout_seconds + 60
                 )
-                await ReviewService(session, github, runner).execute(job, uuid4().hex)
+                # Persist the execution identity before any executor request.
+                # A transport failure can leave the executor with a durable
+                # result; retaining this id lets the next safe lookup reuse it
+                # instead of starting an untraceable duplicate process.
+                execution_id = job.execution_id or uuid4().hex
+                if job.execution_id is None:
+                    job.execution_id = execution_id
+                    await session.commit()
+                    await session.refresh(job)
+                await ReviewService(session, github, runner).execute(job, execution_id)
                 await repository.finish(job, JobStatus.SUCCEEDED)
             except ReviewSkipped as exc:
                 await finish_after_error(

@@ -148,6 +148,10 @@ class ReviewJob(Base):
     codex_exit_code: Mapped[int | None] = mapped_column(Integer)
     error_stage: Mapped[str | None] = mapped_column(String(32))
     error_signature: Mapped[str | None] = mapped_column(String(64))
+    # The executor id is persisted before the isolated executor is called.
+    # Existing jobs remain NULL because their historical attempt cannot be
+    # reconstructed safely.
+    execution_id: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     correlation_id: Mapped[str | None] = mapped_column(String(64))
     stderr_byte_length: Mapped[int | None] = mapped_column(Integer)
     redacted_diagnostic: Mapped[str | None] = mapped_column(Text)

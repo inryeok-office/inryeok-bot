@@ -1,5 +1,6 @@
 import json
 import logging
+from uuid import uuid4
 
 import httpx
 from sqlalchemy import select
@@ -35,6 +36,14 @@ class ReviewService:
         self.session, self.github, self.runner = session, github, runner
 
     async def execute(self, job: ReviewJob, execution_id: str | None = None) -> None:
+        # Keep direct callers (tests/administrative runners) on the same
+        # durable identity contract as the worker.  The worker commits this
+        # value before entering the executor; here we at least bind it before
+        # the runner is invoked when the service is used directly.
+        execution_id = execution_id or job.execution_id or uuid4().hex
+        if job.execution_id is None:
+            job.execution_id = execution_id
+            await self.session.flush()
         config = await self.session.scalar(
             select(RepositorySettings).where(
                 RepositorySettings.installation_id == job.installation_id,
