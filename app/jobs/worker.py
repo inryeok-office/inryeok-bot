@@ -64,7 +64,37 @@ def failure_category(error: CodexError | Exception) -> str:
             "CODEX_OUTPUT_MISSING": "SCHEMA",
             "SCHEMA_ERROR": "SCHEMA",
         }.get(error.code, "INTERNAL")
+    if isinstance(error, GitHubAPIError):
+        if error.category == "GITHUB_RATE_LIMIT" or error.status_code == 429:
+            return "RATE_LIMIT"
+        if error.status_code in {401, 403}:
+            return "AUTH"
+        if error.status_code >= 500:
+            return "SERVICE"
+        return "INTERNAL"
+    if isinstance(error, (httpx.TimeoutException, httpx.NetworkError)):
+        return "SERVICE"
     return "INTERNAL"
+
+
+def failure_code(error: Exception) -> str:
+    """Return a bounded, actionable code for terminal external failures.
+
+    The previous worker path collapsed every GitHub/transport failure into
+    ``EXTERNAL_FAILURE``.  That made an authentication or rate-limit outage
+    indistinguishable from a malformed request in the admin view and in the
+    user notice.  Only stable categories/statuses are retained; exception
+    messages are still redacted at the call site.
+    """
+    if isinstance(error, GitHubAPIError):
+        return error.category[:100]
+    if isinstance(error, httpx.TimeoutException):
+        return "HTTP_TIMEOUT"
+    if isinstance(error, httpx.NetworkError):
+        return "HTTP_NETWORK_ERROR"
+    if isinstance(error, DiffError):
+        return "DIFF_ERROR"
+    return "EXTERNAL_FAILURE"
 
 
 async def publish_failure_notice(
@@ -178,7 +208,7 @@ async def run_worker() -> None:
                     await session.commit()
                 else:
                     await repository.finish(
-                        job, JobStatus.FAILED, "EXTERNAL_FAILURE", redact(str(exc))
+                        job, JobStatus.FAILED, failure_code(exc), redact(str(exc))
                     )
                     await publish_failure_notice(repository, github, job, failure_category(exc))
             except asyncio.CancelledError:

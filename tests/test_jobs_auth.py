@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from app.codex.runner import CodexError
 from app.config import Settings
 from app.github.auth import InstallationTokenProvider
+from app.github.client import GitHubAPIError
 from app.jobs.models import (
     GlobalReviewSettings,
     JobStatus,
@@ -22,6 +23,7 @@ from app.jobs.repository import JobRepository, claim_statement
 from app.jobs.worker import (
     FAILURE_MESSAGES,
     failure_category,
+    failure_code,
     failure_message,
     finish_after_error,
     publish_failure_notice,
@@ -33,6 +35,24 @@ def test_claim_uses_postgres_skip_locked():
     assert "SKIP LOCKED" in sql
     assert "FOR UPDATE" in sql
     assert "processing_paused" in sql
+
+
+@pytest.mark.parametrize(
+    ("error", "category", "code"),
+    [
+        (GitHubAPIError(401), "AUTH", "GITHUB_API_ERROR"),
+        (GitHubAPIError(403, "GITHUB_RATE_LIMIT"), "RATE_LIMIT", "GITHUB_RATE_LIMIT"),
+        (GitHubAPIError(422), "INTERNAL", "GITHUB_API_ERROR"),
+        (GitHubAPIError(503), "SERVICE", "GITHUB_API_ERROR"),
+        (httpx.TimeoutException("timeout"), "SERVICE", "HTTP_TIMEOUT"),
+        (httpx.NetworkError("network"), "SERVICE", "HTTP_NETWORK_ERROR"),
+    ],
+)
+def test_external_failures_keep_safe_category_and_code(
+    error: Exception, category: str, code: str
+) -> None:
+    assert failure_category(error) == category
+    assert failure_code(error) == code
 
 
 @pytest.mark.asyncio
