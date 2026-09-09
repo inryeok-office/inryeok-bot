@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[1]
 
 
@@ -15,7 +14,7 @@ def test_backup_restore_script_is_fail_closed_and_does_not_prune_volumes() -> No
     assert "alembic_version" in script
     assert "review_jobs" in script
     assert "admin_audit_logs" in script
-    assert "volume rm \"$volume\"" in script
+    assert 'volume rm "$volume"' in script
 
 
 def test_windows_backup_does_not_encode_sql_dump_as_utf16() -> None:

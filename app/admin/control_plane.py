@@ -316,10 +316,27 @@ def apply_repository_policy_patch(
 
     normalized = validate_repository_policy_patch(patch, settings)
     changed: list[str] = []
+    # Keep legacy materialized columns synchronized from the canonical
+    # override command.  They remain compatibility projections only; routes
+    # never write them directly and the resolver still gives overrides
+    # precedence.  INHERIT leaves the projection untouched so an explicit
+    # setting cannot be accidentally cleared by a partial form.
+    compatibility_projection = {
+        "override_enabled": "enabled",
+        "override_auto_review_enabled": "auto_review",
+        "override_minimum_confidence": "min_confidence",
+        "override_max_findings": "max_findings",
+        "override_include_low_severity": "include_low_severity",
+        "override_ignored_paths": "ignore_patterns",
+    }
     for field_name, value in normalized.items():
         if getattr(repository, field_name) != value:
             setattr(repository, field_name, value)
             changed.append(field_name)
+        projection = compatibility_projection.get(field_name)
+        if projection and value is not None and getattr(repository, projection) != value:
+            setattr(repository, projection, value)
+            changed.append(projection)
     return tuple(changed)
 
 

@@ -150,6 +150,7 @@ async def test_repository_admin_can_change_settings(app_client) -> None:
         f"/admin/repositories/{repository_id}/settings",
         data={
             "_csrf": csrf_token(principal, settings),
+            "expected_version": "1",
             "enabled": "true",
             "auto_review": "true",
             "ignore_draft": "true",
@@ -186,6 +187,7 @@ async def test_repository_settings_partial_form_preserves_unsubmitted_values(app
         f"/admin/repositories/{repository_id}/settings",
         data={
             "_csrf": csrf_token(principal, settings),
+            "expected_version": "1",
             # Deliberately submit only one legacy field.  Missing checkbox and
             # override fields must not be interpreted as false/inherit.
             "ignore_patterns": "generated/**",
@@ -237,6 +239,7 @@ async def test_global_settings_are_saved_with_audit_log(app_client) -> None:
         "/admin/settings",
         data={
             "_csrf": csrf_token(principal, settings),
+            "expected_version": "1",
             "enabled": "true",
             "auto_review_enabled": "true",
             "command_review_enabled": "true",
