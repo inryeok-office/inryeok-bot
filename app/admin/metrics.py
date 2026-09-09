@@ -37,6 +37,10 @@ class UsageMetrics:
     by_repository: tuple[MetricRow, ...]
     by_trigger: tuple[MetricRow, ...]
     by_error: tuple[MetricRow, ...]
+    by_error_category: tuple[MetricRow, ...]
+    by_stage: tuple[MetricRow, ...]
+    retryable_failures: int
+    non_retryable_failures: int
     raw_findings: int
     schema_valid_findings: int
     evidence_findings: int
@@ -85,6 +89,8 @@ async def usage_metrics(session: AsyncSession, period_days: int = 1) -> UsageMet
     repository_counts: dict[str, int] = {}
     trigger_counts: dict[str, int] = {}
     error_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+    stage_counts: dict[str, int] = {}
     for job in jobs:
         repository = f"{job.repository_owner}/{job.repository_name}"
         repository_counts[repository] = repository_counts.get(repository, 0) + 1
@@ -92,6 +98,10 @@ async def usage_metrics(session: AsyncSession, period_days: int = 1) -> UsageMet
         trigger_counts[trigger] = trigger_counts.get(trigger, 0) + 1
         if job.error_code:
             error_counts[job.error_code] = error_counts.get(job.error_code, 0) + 1
+            category = job.error_category or "UNCLASSIFIED"
+            category_counts[category] = category_counts.get(category, 0) + 1
+            stage = job.error_stage or "UNKNOWN"
+            stage_counts[stage] = stage_counts.get(stage, 0) + 1
 
     runs = list(
         (
@@ -133,6 +143,16 @@ async def usage_metrics(session: AsyncSession, period_days: int = 1) -> UsageMet
         by_trigger=tuple(MetricRow(*item) for item in sorted(trigger_counts.items(), key=row_sort)),
         by_error=tuple(
             MetricRow(*item) for item in sorted(error_counts.items(), key=row_sort)[:10]
+        ),
+        by_error_category=tuple(
+            MetricRow(*item) for item in sorted(category_counts.items(), key=row_sort)
+        ),
+        by_stage=tuple(MetricRow(*item) for item in sorted(stage_counts.items(), key=row_sort)),
+        retryable_failures=sum(
+            1 for job in jobs if job.error_code and job.retry_policy not in {None, "NEVER"}
+        ),
+        non_retryable_failures=sum(
+            1 for job in jobs if job.error_code and job.retry_policy == "NEVER"
         ),
         raw_findings=raw,
         schema_valid_findings=schema_valid,

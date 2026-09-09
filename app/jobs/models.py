@@ -155,6 +155,14 @@ class ReviewJob(Base):
     correlation_id: Mapped[str | None] = mapped_column(String(64))
     stderr_byte_length: Mapped[int | None] = mapped_column(Integer)
     redacted_diagnostic: Mapped[str | None] = mapped_column(Text)
+    error_category: Mapped[str | None] = mapped_column(String(32), index=True)
+    retry_policy: Mapped[str | None] = mapped_column(String(32))
+    user_action_required: Mapped[bool | None] = mapped_column(Boolean)
+    user_error_message: Mapped[str | None] = mapped_column(Text)
+    operator_error_message: Mapped[str | None] = mapped_column(Text)
+    output_field: Mapped[str | None] = mapped_column(String(128))
+    validation_type: Mapped[str | None] = mapped_column(String(64))
+    http_status: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -171,6 +179,10 @@ class ReviewJob(Base):
     runs: Mapped[list["ReviewRun"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
+
+    @property
+    def retryable(self) -> bool:
+        return self.retry_policy not in {None, "NEVER"} if self.error_code else False
 
 
 class RepositorySettings(Base):

@@ -7,8 +7,9 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import httpx
+from pydantic import ValidationError
 
-from app.codex.runner import CodexError, ReviewRunner
+from app.codex.runner import CodexError, ReviewRunner, _validation_diagnostic
 from app.codex.schemas import ReviewOutput
 
 MAX_ARCHIVE_BYTES = 25_000_000
@@ -129,8 +130,19 @@ class ExecutorRunner(ReviewRunner):
                 )
             raise codex_error
         try:
-            return ReviewOutput.model_validate(response.json())
+            payload = response.json()
         except (ValueError, TypeError) as exc:
-            raise CodexError(
-                "CODEX_OUTPUT_SCHEMA", "Codex executor returned invalid output"
-            ) from exc
+            error = CodexError("OUTPUT_JSON_INVALID", "Codex executor returned invalid JSON")
+            error.stage = "output_extract"
+            raise error from exc
+        try:
+            return ReviewOutput.model_validate(payload)
+        except ValidationError as exc:
+            error = CodexError(
+                "OUTPUT_MODEL_VALIDATION_FAILED",
+                "Codex executor output failed the response contract",
+                signature="output_contract_mismatch",
+            )
+            error.stage = "output_model_validation"
+            error.safe_diagnostic = _validation_diagnostic(exc)
+            raise error from exc

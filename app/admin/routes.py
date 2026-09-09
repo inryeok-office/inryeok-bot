@@ -190,6 +190,10 @@ async def jobs(
     request: Request,
     repository: str | None = None,
     status_filter: str | None = None,
+    error_code: str | None = None,
+    error_category: str | None = None,
+    error_stage: str | None = None,
+    retryable: bool | None = None,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     principal: AdminPrincipal = Depends(require_admin),
@@ -203,6 +207,16 @@ async def jobs(
         )
     if status_filter and status_filter in {item.value for item in JobStatus}:
         query = query.where(ReviewJob.status == JobStatus(status_filter))
+    if error_code:
+        query = query.where(ReviewJob.error_code == error_code[:100])
+    if error_category:
+        query = query.where(ReviewJob.error_category == error_category[:32])
+    if error_stage:
+        query = query.where(ReviewJob.error_stage == error_stage[:32])
+    if retryable is True:
+        query = query.where(ReviewJob.retry_policy.is_not(None), ReviewJob.retry_policy != "NEVER")
+    elif retryable is False:
+        query = query.where(ReviewJob.retry_policy == "NEVER")
     values = (await session.scalars(query.order_by(ReviewJob.created_at.desc()).limit(100))).all()
     global_settings = await session.get(GlobalReviewSettings, 1)
     if global_settings is None:
@@ -219,6 +233,10 @@ async def jobs(
             jobs=values,
             repository_filter=repository,
             status_filter=status_filter,
+            error_code_filter=error_code,
+            error_category_filter=error_category,
+            error_stage_filter=error_stage,
+            retryable_filter=retryable,
         ),
     )
 

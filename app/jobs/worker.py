@@ -15,8 +15,9 @@ from app.db.session import get_session_factory
 from app.github.client import GitHubAPIError, GitHubClient
 from app.jobs.models import JobStatus, ReviewJob
 from app.jobs.repository import JobRepository
-from app.logging import configure_logging, redact
+from app.logging import configure_logging
 from app.review.diff import DiffError
+from app.review.failures import ReviewFailure, failure_from_exception
 from app.review.service import ReviewService, ReviewSkipped
 
 logger = logging.getLogger(__name__)
@@ -101,11 +102,12 @@ async def publish_failure_notice(
     repository: JobRepository,
     github: GitHubClient,
     job: ReviewJob,
-    category: str,
+    category: str | ReviewFailure,
     retry_at: datetime | None = None,
 ) -> None:
     """Publish one safe, user-facing failure notice for a PR head and category."""
-    notice = await repository.get_or_create_failure_notice(job, category)
+    notice_category = category.category if isinstance(category, ReviewFailure) else category
+    notice = await repository.get_or_create_failure_notice(job, notice_category)
     if notice.github_comment_id is not None:
         return
     try:
@@ -114,8 +116,12 @@ async def publish_failure_notice(
             job.repository_owner,
             job.repository_name,
             job.pull_request_number,
-            failure_message(category, retry_at)
-            + f"\n\n<!-- inryeok-review-failure:{category.casefold()} -->",
+            (
+                category.user_message_ko
+                if isinstance(category, ReviewFailure)
+                else failure_message(category, retry_at)
+            )
+            + f"\n\n<!-- inryeok-review-failure:{notice_category.casefold()} -->",
         )
         notice.github_comment_id = int(posted["id"])
         await repository.session.commit()
@@ -135,6 +141,24 @@ async def finish_after_error(
     """Clear a failed transaction before recording a terminal job state."""
     await session.rollback()
     await repository.finish(job, status, error_code, error_message)
+
+
+def _apply_failure(job: ReviewJob, failure: ReviewFailure) -> None:
+    """Copy only the bounded, structured failure contract onto a Job."""
+    job.error_code = failure.error_code
+    job.error_category = failure.category
+    job.error_stage = failure.stage
+    job.error_signature = failure.safe_signature
+    job.retry_policy = failure.retry_policy
+    job.user_action_required = failure.user_action_required
+    job.user_error_message = failure.user_message_ko
+    job.operator_error_message = failure.operator_message_ko
+    job.output_field = failure.output_field
+    job.validation_type = failure.validation_type
+    job.http_status = failure.http_status
+    job.codex_exit_code = failure.process_exit_code
+    if failure.correlation_id:
+        job.correlation_id = failure.correlation_id
 
 
 async def run_worker() -> None:
@@ -187,8 +211,9 @@ async def run_worker() -> None:
                 assert github is not None
                 attempts = job.attempts
                 await session.rollback()
+                failure = failure_from_exception(exc, job=job)
+                _apply_failure(job, failure)
                 job.codex_exit_code = exc.exit_code
-                job.error_stage = exc.stage
                 job.error_signature = exc.signature
                 job.correlation_id = exc.correlation_id
                 job.stderr_byte_length = exc.stderr_byte_length
@@ -196,30 +221,30 @@ async def run_worker() -> None:
                 if exc.retryable and attempts < settings.worker_max_attempts:
                     job.status = JobStatus.PENDING
                     job.started_at = None
-                    job.error_code = exc.code
-                    job.error_message = str(exc)
+                    job.error_message = failure.operator_message_ko
                     await session.commit()
                 else:
-                    await repository.finish(job, JobStatus.FAILED, exc.code, str(exc))
-                    await publish_failure_notice(
-                        repository, github, job, failure_category(exc), exc.retry_at
+                    await repository.finish(
+                        job, JobStatus.FAILED, failure.error_code, failure.operator_message_ko
                     )
+                    await publish_failure_notice(repository, github, job, failure, exc.retry_at)
             except (httpx.TimeoutException, httpx.NetworkError, DiffError, GitHubAPIError) as exc:
                 assert github is not None
                 attempts = job.attempts
                 await session.rollback()
-                retryable = not isinstance(exc, GitHubAPIError) or exc.retryable
+                failure = failure_from_exception(exc, job=job)
+                _apply_failure(job, failure)
+                retryable = failure.retryable
                 if retryable and attempts < settings.worker_max_attempts:
                     job.status = JobStatus.PENDING
                     job.started_at = None
-                    job.error_code = "TRANSIENT"
-                    job.error_message = redact(str(exc))
+                    job.error_message = failure.operator_message_ko
                     await session.commit()
                 else:
                     await repository.finish(
-                        job, JobStatus.FAILED, failure_code(exc), redact(str(exc))
+                        job, JobStatus.FAILED, failure.error_code, failure.operator_message_ko
                     )
-                    await publish_failure_notice(repository, github, job, failure_category(exc))
+                    await publish_failure_notice(repository, github, job, failure)
             except asyncio.CancelledError:
                 await session.rollback()
                 job.status = JobStatus.PENDING
@@ -229,10 +254,17 @@ async def run_worker() -> None:
             except Exception as exc:
                 assert github is not None
                 logger.warning("Review job %s failed with an unexpected error", job.id)
+                failure = failure_from_exception(exc, job=job)
+                _apply_failure(job, failure)
                 await finish_after_error(
-                    session, repository, job, JobStatus.FAILED, "UNEXPECTED", redact(str(exc))
+                    session,
+                    repository,
+                    job,
+                    JobStatus.FAILED,
+                    failure.error_code,
+                    failure.operator_message_ko,
                 )
-                await publish_failure_notice(repository, github, job, failure_category(exc))
+                await publish_failure_notice(repository, github, job, failure)
             finally:
                 if github is not None:
                     await github.http.aclose()
