@@ -18,6 +18,7 @@ MAX_CAPTURE_BYTES = 16_000
 MAX_SAFE_DIAGNOSTIC_BYTES = 2_048
 MAX_SAFE_DIAGNOSTIC_LINES = 10
 MAX_SAFE_DIAGNOSTIC_LINE = 300
+SCHEMA_DIAGNOSTIC_FALLBACK = "output_field=__root__;type=schema_validation_unknown"
 
 
 def _validation_diagnostic(error: ValidationError) -> tuple[str, ...]:
@@ -30,6 +31,20 @@ def _validation_diagnostic(error: ValidationError) -> tuple[str, ...]:
         if len(diagnostics) >= MAX_SAFE_DIAGNOSTIC_LINES:
             break
     return tuple(diagnostics)
+
+
+def normalize_schema_diagnostic(
+    diagnostic: tuple[str, ...] | list[str] | None,
+) -> tuple[tuple[str, ...], bool]:
+    """Keep schema diagnostics typed and guarantee a safe bounded fallback."""
+    values = tuple(
+        item[:MAX_SAFE_DIAGNOSTIC_LINE]
+        for item in (diagnostic or ())
+        if isinstance(item, str) and item.startswith("output_field=") and ";type=" in item
+    )[:MAX_SAFE_DIAGNOSTIC_LINES]
+    if values:
+        return values, False
+    return (SCHEMA_DIAGNOSTIC_FALLBACK,), True
 
 
 def _process_group_options() -> dict[str, Any]:
@@ -85,6 +100,7 @@ class CodexError(RuntimeError):
         self.signature = signature or code
         self.exit_code: int | None = None
         self.safe_diagnostic: tuple[str, ...] = ()
+        self.diagnostic_extraction_failed = False
         self.stderr_byte_length = 0
         self.correlation_id: str | None = None
         self.stage = "codex_exec"
@@ -506,5 +522,7 @@ class CodexRunner:
                 "Codex output did not match the review schema",
                 signature="output_contract_mismatch",
             )
-            error.safe_diagnostic = _validation_diagnostic(exc)
+            error.safe_diagnostic, error.diagnostic_extraction_failed = normalize_schema_diagnostic(
+                _validation_diagnostic(exc)
+            )
             raise error from exc

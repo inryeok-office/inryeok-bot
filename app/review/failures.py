@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from app.codex.runner import CodexError
+from app.codex.runner import CodexError, normalize_schema_diagnostic
 from app.github.client import GitHubAPIError
 
 
@@ -36,6 +36,7 @@ class RetryPolicy(StrEnum):
 
 _SCHEMA_CODES = {
     "CODEX_OUTPUT_SCHEMA_MISMATCH": "OUTPUT_SCHEMA_MISMATCH",
+    "SCHEMA_ERROR": "JSON_SCHEMA_VALIDATION_FAILED",
     "CODEX_OUTPUT_INVALID_JSON": "OUTPUT_JSON_INVALID",
     "CODEX_OUTPUT_MISSING": "OUTPUT_EMPTY",
     "OUTPUT_MODEL_VALIDATION_FAILED": "OUTPUT_MODEL_VALIDATION_FAILED",
@@ -81,6 +82,7 @@ class ReviewFailure:
     process_exit_code: int | None = None
     output_field: str | None = None
     validation_type: str | None = None
+    diagnostic_extraction_failed: bool = False
     occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     safe_metadata: dict[str, str | int | bool] = field(default_factory=dict)
 
@@ -189,8 +191,13 @@ def failure_from_exception(exc: Exception, *, job: Any = None) -> ReviewFailure:
         code = "EXECUTOR_UNAVAILABLE"
     code = str(code or "UNEXPECTED_INTERNAL_ERROR")
     category, stage, retryable, retry_policy, action = _defaults(code)
+    diagnostic_failed = False
     if isinstance(exc, CodexError):
         diagnostic = exc.safe_diagnostic
+        diagnostic_failed = bool(getattr(exc, "diagnostic_extraction_failed", False))
+        if code in _SCHEMA_CODES:
+            diagnostic, fallback_used = normalize_schema_diagnostic(diagnostic)
+            diagnostic_failed = diagnostic_failed or fallback_used
         output_field, validation_type = _diagnostic_parts(diagnostic)
         signature = exc.signature[:64]
         exit_code = exc.exit_code
@@ -198,8 +205,12 @@ def failure_from_exception(exc: Exception, *, job: Any = None) -> ReviewFailure:
         stage = exc.stage
         if exc.retryable and retry_policy == RetryPolicy.NEVER.value:
             retryable, retry_policy = True, RetryPolicy.DELAYED.value
-    if code in _SCHEMA_CODES:
+    if code in {"CODEX_OUTPUT_SCHEMA_MISMATCH", "SCHEMA_ERROR"}:
         stage = "output_schema"
+    elif code == "OUTPUT_MODEL_VALIDATION_FAILED":
+        stage = "output_model_validation"
+    elif code == "CODEX_OUTPUT_INVALID_JSON":
+        stage = "output_extract"
     else:
         output_field = validation_type = None
         signature = getattr(exc, "category", code)[:64]
@@ -234,5 +245,9 @@ def failure_from_exception(exc: Exception, *, job: Any = None) -> ReviewFailure:
         process_exit_code=exit_code,
         output_field=output_field,
         validation_type=validation_type,
-        safe_metadata={"stderr_byte_length": int(getattr(exc, "stderr_byte_length", 0) or 0)},
+        diagnostic_extraction_failed=diagnostic_failed,
+        safe_metadata={
+            "stderr_byte_length": int(getattr(exc, "stderr_byte_length", 0) or 0),
+            "diagnostic_extraction_failed": diagnostic_failed,
+        },
     )

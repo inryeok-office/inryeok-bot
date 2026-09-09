@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 
 from app.codex.runner import CodexError, classify_codex_failure, redact_diagnostic
+from app.review.failures import failure_from_exception
+from app.jobs.models import ReviewJob
+from app.jobs.worker import _apply_failure
 from scripts.diagnose_codex_failure import _one_codex_call, _sandbox_status
 
 
@@ -82,3 +85,35 @@ def test_failure_categories_are_safe_and_unknown_is_not_retryable() -> None:
         error = classify_codex_failure(1, b"", stderr)
         assert error.code == code
         assert error.retryable is retryable
+
+
+def test_schema_failure_fallback_is_persistable_without_original_value() -> None:
+    error = CodexError("CODEX_OUTPUT_SCHEMA_MISMATCH", "schema mismatch")
+    failure = failure_from_exception(error)
+    assert failure.output_field == "__root__"
+    assert failure.validation_type == "schema_validation_unknown"
+    assert failure.retry_policy == "NEVER"
+    assert failure.diagnostic_extraction_failed is True
+    assert failure.safe_metadata["diagnostic_extraction_failed"] is True
+
+
+def test_schema_failure_fields_reach_job_record_without_original_value() -> None:
+    error = CodexError("CODEX_OUTPUT_SCHEMA_MISMATCH", "schema mismatch")
+    job = ReviewJob(
+        delivery_id="synthetic-schema-loss",
+        installation_id=1,
+        repository_owner="acme",
+        repository_name="repo",
+        pull_request_number=1,
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        trigger_type="COMMAND",
+    )
+    failure = failure_from_exception(error, job=job)
+    _apply_failure(job, failure)
+    assert job.error_code == "OUTPUT_SCHEMA_MISMATCH"
+    assert job.error_stage == "output_schema"
+    assert job.output_field == "__root__"
+    assert job.validation_type == "schema_validation_unknown"
+    assert job.retry_policy == "NEVER"
+    assert job.diagnostic_extraction_failed is True

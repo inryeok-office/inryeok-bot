@@ -155,6 +155,7 @@ def _apply_failure(job: ReviewJob, failure: ReviewFailure) -> None:
     job.operator_error_message = failure.operator_message_ko
     job.output_field = failure.output_field
     job.validation_type = failure.validation_type
+    job.diagnostic_extraction_failed = failure.diagnostic_extraction_failed
     job.http_status = failure.http_status
     job.codex_exit_code = failure.process_exit_code
     if failure.correlation_id:

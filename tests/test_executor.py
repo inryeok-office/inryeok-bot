@@ -89,6 +89,39 @@ async def test_executor_runner_preserves_safe_error_category(monkeypatch, tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_executor_schema_failure_never_loses_diagnostic(monkeypatch, tmp_path) -> None:
+    class Response:
+        status_code = 500
+
+        def json(self) -> dict[str, object]:
+            return {
+                "error_code": "CODEX_OUTPUT_SCHEMA_MISMATCH",
+                "retryable": False,
+                "safe_diagnostic": [],
+            }
+
+    class Client:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, path: str, **kwargs: object) -> Response:
+            return Response()
+
+    monkeypatch.setattr("app.codex.executor_client.httpx.AsyncClient", Client)
+    with pytest.raises(CodexError) as raised:
+        await ExecutorRunner("http://executor").run(tmp_path, "review")
+    error = raised.value
+    assert error.safe_diagnostic == ("output_field=__root__;type=schema_validation_unknown",)
+    assert error.diagnostic_extraction_failed is True
+
+
+@pytest.mark.asyncio
 async def test_executor_transport_disconnect_is_safe_unknown_outcome(monkeypatch, tmp_path) -> None:
     class Client:
         def __init__(self, **kwargs: object) -> None:
@@ -188,6 +221,33 @@ async def test_executor_settings_do_not_read_dotenv(monkeypatch) -> None:
 
     assert output == {"summary": "ok", "findings": []}
     assert seen["_env_file"] is None
+
+
+@pytest.mark.asyncio
+async def test_executor_response_serializes_schema_diagnostic_fallback(monkeypatch) -> None:
+    class SettingsStub:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+    class RunnerStub:
+        def __init__(self, settings: object) -> None:
+            pass
+
+        async def run(self, *args: object) -> ReviewOutput:
+            raise CodexError("CODEX_OUTPUT_SCHEMA_MISMATCH", "schema mismatch")
+
+    monkeypatch.setattr("app.codex.executor.Settings", SettingsStub)
+    monkeypatch.setattr("app.codex.executor.CodexRunner", RunnerStub)
+    request = ReviewRequest(
+        archive=base64.b64encode(_archive()).decode(),
+        prompt="review",
+        execution_id="diagnostic-fallback-123",
+    )
+    response = await _run_review(request)
+    assert isinstance(response, JSONResponse)
+    body = response.body.decode("utf-8")
+    assert "output_field=__root__;type=schema_validation_unknown" in body
+    assert '"diagnostic_extraction_failed":true' in body
 
 
 @pytest.mark.asyncio

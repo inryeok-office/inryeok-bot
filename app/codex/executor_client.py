@@ -9,7 +9,12 @@ from urllib.parse import unquote, urlparse
 import httpx
 from pydantic import ValidationError
 
-from app.codex.runner import CodexError, ReviewRunner, _validation_diagnostic
+from app.codex.runner import (
+    CodexError,
+    ReviewRunner,
+    _validation_diagnostic,
+    normalize_schema_diagnostic,
+)
 from app.codex.schemas import ReviewOutput
 
 MAX_ARCHIVE_BYTES = 25_000_000
@@ -128,6 +133,16 @@ class ExecutorRunner(ReviewRunner):
                 codex_error.safe_diagnostic = tuple(
                     item for item in raw_diagnostic if isinstance(item, str)
                 )
+            raw_diagnostic_failed = body.get("diagnostic_extraction_failed")
+            if isinstance(raw_diagnostic_failed, bool):
+                codex_error.diagnostic_extraction_failed = raw_diagnostic_failed
+            if error_code in {"CODEX_OUTPUT_SCHEMA_MISMATCH", "SCHEMA_ERROR"}:
+                codex_error.safe_diagnostic, fallback_used = normalize_schema_diagnostic(
+                    codex_error.safe_diagnostic
+                )
+                codex_error.diagnostic_extraction_failed = (
+                    codex_error.diagnostic_extraction_failed or fallback_used
+                )
             raise codex_error
         try:
             payload = response.json()
@@ -144,5 +159,7 @@ class ExecutorRunner(ReviewRunner):
                 signature="output_contract_mismatch",
             )
             error.stage = "output_model_validation"
-            error.safe_diagnostic = _validation_diagnostic(exc)
+            error.safe_diagnostic, error.diagnostic_extraction_failed = normalize_schema_diagnostic(
+                _validation_diagnostic(exc)
+            )
             raise error from exc

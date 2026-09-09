@@ -162,6 +162,7 @@ class ReviewJob(Base):
     operator_error_message: Mapped[str | None] = mapped_column(Text)
     output_field: Mapped[str | None] = mapped_column(String(128))
     validation_type: Mapped[str | None] = mapped_column(String(64))
+    diagnostic_extraction_failed: Mapped[bool | None] = mapped_column(Boolean)
     http_status: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

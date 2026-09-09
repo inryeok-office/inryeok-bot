@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.codex.runner import CodexError, CodexRunner
+from app.codex.runner import CodexError, CodexRunner, normalize_schema_diagnostic
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -314,6 +314,11 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
                 request.reasoning_effort,
             )
         except CodexError as exc:
+            diagnostics = exc.safe_diagnostic
+            diagnostic_failed = exc.diagnostic_extraction_failed
+            if exc.code in {"CODEX_OUTPUT_SCHEMA_MISMATCH", "SCHEMA_ERROR"}:
+                diagnostics, fallback_used = normalize_schema_diagnostic(diagnostics)
+                diagnostic_failed = diagnostic_failed or fallback_used
             status_code = {
                 "CODEX_AUTH": 401,
                 "CODEX_QUOTA": 429,
@@ -335,7 +340,8 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
                     "matched_safe_signature": exc.signature,
                     "exit_code": exc.exit_code,
                     "stderr_byte_length": exc.stderr_byte_length,
-                    "safe_diagnostic": list(exc.safe_diagnostic),
+                    "safe_diagnostic": list(diagnostics),
+                    "diagnostic_extraction_failed": diagnostic_failed,
                     "correlation_id": correlation_id,
                     "stage": "codex_exec",
                     "error": "codex execution failed",
