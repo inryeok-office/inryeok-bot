@@ -227,6 +227,69 @@ async def test_file_and_pr_findings_publish_in_review_summary(app_client, monkey
 
 
 @pytest.mark.asyncio
+async def test_rerun_comparison_uses_publishable_findings_not_raw_output(
+    app_client, monkeypatch
+) -> None:
+    _, factory = app_client
+    monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
+    output = ReviewOutput(
+        summary="one valid issue and one rejected suggestion",
+        findings=[
+            Finding(
+                path="app.py",
+                line=2,
+                category=Category.NULL_SAFETY,
+                severity=Severity.HIGH,
+                confidence=0.95,
+                title="Crash",
+                body="This dereferences None.",
+            ),
+            Finding(
+                path="app.py",
+                line=2,
+                category=Category.SIMPLIFICATION,
+                severity=Severity.MEDIUM,
+                confidence=0.95,
+                title="Rename this variable",
+                body="The variable name could be improved.",
+            ),
+        ],
+    )
+    async with factory() as session:
+        session.add(
+            RepositorySettings(
+                installation_id=4,
+                repository_owner="acme",
+                repository_name="repo",
+                override_language="en",
+            )
+        )
+        job = ReviewJob(
+            delivery_id="comparison-counts",
+            installation_id=4,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=10,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.COMMAND,
+        )
+        session.add(job)
+        await session.commit()
+        github = FakeGitHub()
+        await ReviewService(session, github, FakeRunner(output)).execute(job)  # type: ignore[arg-type]
+        run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == job.id))
+        assert run
+        assert run.raw_findings_count == 2
+        assert run.rejected_findings_count == 1
+        assert run.published_findings_count == 1
+        assert run.comparison_new_count == 1
+        assert run.comparison_still_count == 0
+        assert run.comparison_not_detected_count == 0
+        assert "| New findings | 1 |" in github.payload["body"]
+
+
+@pytest.mark.asyncio
 async def test_no_findings_posts_korean_completion_review(app_client, monkeypatch) -> None:
     _, factory = app_client
     monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)

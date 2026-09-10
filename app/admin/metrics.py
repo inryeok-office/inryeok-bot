@@ -114,7 +114,12 @@ async def usage_metrics(session: AsyncSession, period_days: int = 1) -> UsageMet
     schema_valid = sum(run.schema_valid_findings_count or 0 for run in runs)
     evidence = sum(run.evidence_findings_count or 0 for run in runs)
     published = sum(run.published_findings_count or 0 for run in runs)
-    rejected = max(0, raw - published)
+    rejected = sum(
+        run.rejected_findings_count
+        if run.rejected_findings_count
+        else max(0, (run.raw_findings_count or 0) - (run.published_findings_count or 0))
+        for run in runs
+    )
     # The current schema stores summary fallback as a rejection reason.  Keep
     # this conservative: unknown/missing data is not counted as a fallback.
     fallback = sum(

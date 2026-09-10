@@ -196,8 +196,6 @@ class ReviewService:
                 )
             ).all()
         )
-        prior_fingerprints = set(existing)
-        raw_fingerprints = {fingerprint(item) for item in output.findings}
         validation = validate_findings_with_diagnostics(
             output.findings,
             changed,
@@ -211,6 +209,46 @@ class ReviewService:
         )
         findings = validation.findings
         changed_lines_count = sum(len(file.added_lines) for file in changed.values())
+        published_fingerprints = {fingerprint(item) for item in findings}
+        prior_run = await self.session.scalar(
+            select(ReviewRun)
+            .join(ReviewJob, ReviewRun.job_id == ReviewJob.id)
+            .where(
+                ReviewRun.job_id != job.id,
+                ReviewRun.github_review_id.is_not(None),
+                ReviewJob.repository_owner == job.repository_owner,
+                ReviewJob.repository_name == job.repository_name,
+                ReviewJob.pull_request_number == job.pull_request_number,
+            )
+            .order_by(ReviewRun.id.desc())
+            .limit(1)
+        )
+        prior_fingerprints: set[str] = set()
+        if prior_run is not None and prior_run.published_finding_fingerprints:
+            try:
+                stored = json.loads(prior_run.published_finding_fingerprints)
+                if isinstance(stored, list):
+                    prior_fingerprints = {value for value in stored if isinstance(value, str)}
+            except (TypeError, ValueError):
+                prior_fingerprints = set()
+        if prior_run is not None and not prior_fingerprints:
+            # Legacy runs only persisted inline FindingRecord rows.  Use that
+            # bounded fallback without pretending historical FILE/PR records
+            # existed when they were never stored.
+            prior_fingerprints = set(
+                (
+                    await self.session.scalars(
+                        select(FindingRecord.fingerprint).where(
+                            FindingRecord.review_run_id == prior_run.id
+                        )
+                    )
+                ).all()
+            )
+        comparison = {
+            "new": len(published_fingerprints - prior_fingerprints),
+            "still": len(published_fingerprints & prior_fingerprints),
+            "not_detected": len(prior_fingerprints - published_fingerprints),
+        }
         run = ReviewRun(
             job_id=job.id,
             base_sha=job.base_sha,
@@ -230,8 +268,14 @@ class ReviewService:
             severity_findings_count=validation.severity_count,
             evidence_findings_count=validation.evidence_count,
             deduplicated_findings_count=validation.deduplicated_count,
+            scope_valid_findings_count=validation.changed_file_count,
+            rejected_findings_count=sum(validation.rejection_counts.values()),
             published_findings_count=validation.published_count,
             rejection_counts=json.dumps(validation.rejection_counts, sort_keys=True),
+            published_finding_fingerprints=json.dumps(sorted(published_fingerprints)),
+            comparison_new_count=comparison["new"],
+            comparison_still_count=comparison["still"],
+            comparison_not_detected_count=comparison["not_detected"],
             github_review_id=None,
         )
         logger.info(
@@ -301,9 +345,7 @@ class ReviewService:
                     effective.language,
                     marker,
                     {
-                        "new": len(raw_fingerprints - prior_fingerprints),
-                        "still": len(raw_fingerprints & prior_fingerprints),
-                        "not_detected": max(0, len(prior_fingerprints - raw_fingerprints)),
+                        **comparison,
                     },
                 )
                 try:
@@ -330,9 +372,7 @@ class ReviewService:
                         effective.language,
                         marker,
                         {
-                            "new": len(raw_fingerprints - prior_fingerprints),
-                            "still": len(raw_fingerprints & prior_fingerprints),
-                            "not_detected": max(0, len(prior_fingerprints - raw_fingerprints)),
+                            **comparison,
                         },
                         include_inline_comments=False,
                     )
