@@ -35,8 +35,9 @@ def build_prompt(
         "CONSERVATIVE": "Prioritize definite outages, security, data loss, and clear regressions.",
         "BALANCED": "Also review evidenced correctness, API, concurrency, null, exception, "
         "performance, and simplification issues.",
-        "THOROUGH": "Also review evidenced small performance, duplication, complexity, and "
-        "missing-test issues; never invent findings.",
+        "THOROUGH": "Analyze the changed behavior and its direct effects more deeply across "
+        "failure, compatibility, performance, concurrency, and missing-test angles; do not "
+        "perform a wider repository audit or invent findings.",
     }.get(str(profile), "")
     raw_domains = settings.get("review_domains", ["GENERAL"])
     domains = (

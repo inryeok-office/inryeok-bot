@@ -2,7 +2,7 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from app.codex.schemas import Category, Finding, FindingScope, Severity
+from app.codex.schemas import Category, ChangeRelation, Finding, FindingScope, Severity
 from app.review.deduplicator import fingerprint
 from app.review.diff import ChangedFile, normalize_path
 
@@ -110,6 +110,52 @@ def _structured_evidence_is_complete(finding: Finding) -> bool:
     return bool(finding.condition and finding.impact and finding.evidence)
 
 
+def _relation(finding: Finding) -> ChangeRelation:
+    if finding.relation_to_change is not None:
+        return finding.relation_to_change
+    return {
+        FindingScope.LINE: ChangeRelation.DIRECT_CHANGE,
+        FindingScope.FILE: ChangeRelation.CHANGED_FILE_CONTEXT,
+        FindingScope.PR: ChangeRelation.PR_WIDE,
+    }[finding.scope]
+
+
+def _causal_evidence_is_grounded(finding: Finding, changed: dict[str, ChangedFile]) -> bool:
+    relation = _relation(finding)
+    if relation not in {ChangeRelation.CROSS_FILE_IMPACT, ChangeRelation.PR_WIDE}:
+        return True
+    if finding.relation_to_change is None:
+        return True
+    if not finding.causal_evidence:
+        return False
+    text = " ".join(
+        value for value in (finding.evidence, finding.causal_evidence) if value
+    ).casefold()
+    return any(path.casefold() in text for path in changed) or bool(
+        finding.changed_symbol and finding.changed_symbol.casefold() in text
+    )
+
+
+def _suggested_fix_is_in_scope(finding: Finding, changed: dict[str, ChangedFile]) -> bool:
+    if finding.relation_to_change is None or not finding.suggested_fix:
+        return True
+    fix = finding.suggested_fix.casefold()
+    broad = (
+        "repository-wide",
+        "entire repository",
+        "all files",
+        "other files",
+        "unrelated",
+        "refactor",
+    )
+    if not any(token in fix for token in broad):
+        return True
+    anchors = [path.casefold() for path in changed]
+    if finding.changed_symbol:
+        anchors.append(finding.changed_symbol.casefold())
+    return any(anchor in fix for anchor in anchors)
+
+
 def validate_findings(
     findings: Iterable[Finding],
     changed: dict[str, ChangedFile],
@@ -155,6 +201,29 @@ def validate_findings_with_diagnostics(
 
     minimum_order = ORDER[Severity(minimum_severity)]
     for finding in findings:
+        if finding.relation_to_change is None and finding.causal_evidence is not None:
+            reject("CHANGE_RELATION_MISSING")
+            continue
+        relation = _relation(finding)
+        if relation == ChangeRelation.PRE_EXISTING_UNRELATED or finding.introduced_by_pr is False:
+            reject("PRE_EXISTING_UNRELATED")
+            continue
+        if finding.relation_to_change is not None and finding.introduced_by_pr is not True:
+            reject("CHANGE_RELATION_MISSING")
+            continue
+        if relation in {
+            ChangeRelation.CROSS_FILE_IMPACT,
+            ChangeRelation.PR_WIDE,
+        } and not _causal_evidence_is_grounded(finding, changed):
+            reject(
+                "CAUSAL_EVIDENCE_MISSING"
+                if not finding.causal_evidence
+                else "INVALID_CROSS_FILE_IMPACT"
+            )
+            continue
+        if not _suggested_fix_is_in_scope(finding, changed):
+            reject("OUT_OF_SCOPE_SUGGESTED_FIX")
+            continue
         if not _structured_evidence_is_complete(finding):
             reject("MISSING_STRUCTURED_EVIDENCE")
             continue
@@ -169,7 +238,11 @@ def validate_findings_with_diagnostics(
                 continue
             file = changed.get(finding.path)
             if not file:
-                reject("FILE_NOT_CHANGED")
+                reject(
+                    "PATH_NOT_CHANGED"
+                    if finding.relation_to_change is not None
+                    else "FILE_NOT_CHANGED"
+                )
                 continue
         elif finding.scope == FindingScope.FILE:
             if finding.path is None:
@@ -182,7 +255,11 @@ def validate_findings_with_diagnostics(
                 continue
             file = changed.get(finding.path)
             if not file:
-                reject("FILE_NOT_CHANGED")
+                reject(
+                    "PATH_NOT_CHANGED"
+                    if finding.relation_to_change is not None
+                    else "FILE_NOT_CHANGED"
+                )
                 continue
         elif finding.scope == FindingScope.PR:
             if finding.path is not None:
@@ -192,7 +269,11 @@ def validate_findings_with_diagnostics(
                     reject("INVALID_PATH")
                     continue
                 if finding.path not in changed:
-                    reject("FILE_NOT_CHANGED")
+                    reject(
+                        "PATH_NOT_CHANGED"
+                        if finding.relation_to_change is not None
+                        else "FILE_NOT_CHANGED"
+                    )
                     continue
             if not changed:
                 reject("NO_CHANGED_FILES")
@@ -210,7 +291,11 @@ def validate_findings_with_diagnostics(
         if finding.scope == FindingScope.LINE:
             assert file is not None and finding.line is not None
             if finding.line not in file.added_lines:
-                reject("LINE_NOT_RIGHT_SIDE")
+                reject(
+                    "LINE_NOT_CHANGED"
+                    if finding.relation_to_change is not None
+                    else "LINE_NOT_RIGHT_SIDE"
+                )
                 continue
             changed_line_count += 1
         if finding.confidence < min_confidence:

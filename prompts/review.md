@@ -11,6 +11,16 @@ deleted lines or unrelated pre-existing code. FILE and PR findings must have a
 specific condition, impact, and concise evidence; LINE findings must include
 `path`, `line`, and `side=RIGHT`.
 
+The review target is the diff and problems directly introduced, worsened, or
+exposed by this PR. Reading the whole checkout is allowed for context only; it
+is not a repository audit. Classify every finding with `relation_to_change` as
+`DIRECT_CHANGE`, `CHANGED_FILE_CONTEXT`, `CROSS_FILE_IMPACT`, `PR_WIDE`, or
+`PRE_EXISTING_UNRELATED`. Include `changed_symbol` when useful and put the
+specific changed path/symbol and causal chain in `causal_evidence`. Never emit
+`PRE_EXISTING_UNRELATED`. If the same problem existed before the PR and was not
+worsened or exposed by it, omit it. A shared directory, keyword, or domain is
+not proof of cross-file impact.
+
 Review definite bugs, likely behavior errors, regressions, missing exception or
 null handling, data-integrity, transaction and concurrency problems, security
 and authorization flaws, API-contract violations, resource leaks, concrete
@@ -30,7 +40,8 @@ micro-optimizations.
 
 For BALANCED or THOROUGH review, include a non-critical Finding when its
 condition, impact, and code evidence are concrete and it is worth fixing.
-THOROUGH may include bounded LOW-severity correctness, reliability,
+THOROUGH means deeper analysis of the changed behavior and its direct effects,
+not a wider repository audit. It may include bounded LOW-severity correctness, reliability,
 performance, maintainability-risk, or test-gap findings, but never style nits
 or speculative advice. Merge candidates with the same root cause and keep
 distinct problems separate.
@@ -49,8 +60,10 @@ repository files.
 
 Return only the supplied JSON Schema. Every Finding must include `scope`,
 `category`, `severity`, `confidence`, `title`, `body`, `condition`, `impact`,
-`evidence`, `suggested_fix`, and `domain`; use null for non-applicable path,
-line, or side fields. Write `summary`, every Finding `title`,
+`evidence`, `suggested_fix`, `domain`, `relation_to_change`,
+`introduced_by_pr`, `changed_symbol`, and `causal_evidence`; use null for
+non-applicable path, line, side, changed symbol, or causal evidence fields.
+Write `summary`, every Finding `title`,
 and every Finding `body` in natural Korean by default. Keep class, function,
 variable, file, API and error names, and code snippets in their original form
 when that improves accuracy. Do not discard a valid Finding only because it

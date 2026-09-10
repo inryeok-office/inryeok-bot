@@ -175,6 +175,7 @@ class ReviewJob(Base):
     effective_review_domains: Mapped[str | None] = mapped_column(Text)
     detection_reasons: Mapped[str | None] = mapped_column(Text)
     prompt_version: Mapped[str | None] = mapped_column(String(32))
+    review_profile: Mapped[str | None] = mapped_column(String(32))
     model: Mapped[str | None] = mapped_column(String(128))
     reasoning_effort: Mapped[str | None] = mapped_column(String(16))
     runs: Mapped[list["ReviewRun"]] = relationship(

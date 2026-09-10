@@ -43,6 +43,14 @@ class FindingScope(StrEnum):
     PR = "PR"
 
 
+class ChangeRelation(StrEnum):
+    DIRECT_CHANGE = "DIRECT_CHANGE"
+    CHANGED_FILE_CONTEXT = "CHANGED_FILE_CONTEXT"
+    CROSS_FILE_IMPACT = "CROSS_FILE_IMPACT"
+    PR_WIDE = "PR_WIDE"
+    PRE_EXISTING_UNRELATED = "PRE_EXISTING_UNRELATED"
+
+
 class Finding(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scope: FindingScope = FindingScope.LINE
@@ -64,6 +72,10 @@ class Finding(BaseModel):
     evidence: str | None = Field(default=None, max_length=1200)
     suggested_fix: str | None = Field(default=None, max_length=1200)
     domain: str | None = Field(default=None, max_length=64)
+    relation_to_change: ChangeRelation | None = None
+    introduced_by_pr: bool | None = None
+    changed_symbol: str | None = Field(default=None, max_length=300)
+    causal_evidence: str | None = Field(default=None, max_length=1200)
 
     @model_validator(mode="before")
     @classmethod

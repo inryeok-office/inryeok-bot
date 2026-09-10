@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 
 from app.codex.runner import CodexError, classify_codex_failure, redact_diagnostic
-from app.review.failures import failure_from_exception
 from app.jobs.models import ReviewJob
 from app.jobs.worker import _apply_failure
+from app.review.failures import failure_from_exception
 from scripts.diagnose_codex_failure import _one_codex_call, _sandbox_status
 
 

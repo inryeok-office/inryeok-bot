@@ -89,6 +89,7 @@ class ReviewService:
         # Preserve the effective policy used by this job for auditability.
         job.model = effective.model
         job.reasoning_effort = effective.reasoning_effort
+        job.review_profile = effective.review_profile
         patterns = list(effective.ignored_paths)
         await self._execute_checkout(job, config, patterns, effective, execution_id)
 

@@ -36,6 +36,8 @@ def ignored(path: str, patterns: list[str]) -> bool:
 class ChangedFile:
     path: str
     added_lines: frozenset[int]
+    old_path: str | None = None
+    status: str = "modified"
 
 
 DIFF_HEADER = re.compile(r"^diff --git a/(.+) b/(.+)$")
@@ -48,19 +50,28 @@ def parse_unified_diff(
     patterns = ignore_patterns or []
     result: dict[str, ChangedFile] = {}
     path: str | None = None
+    old_path: str | None = None
     lines: set[int] = set()
     new_line: int | None = None
     binary = False
 
     def save() -> None:
         if path and not binary and not ignored(path, patterns):
-            result[path] = ChangedFile(path, frozenset(lines))
+            result[path] = ChangedFile(
+                path,
+                frozenset(lines),
+                old_path=old_path if old_path != path else None,
+                status="renamed"
+                if old_path and old_path != path
+                else ("deleted" if not lines else "modified"),
+            )
 
     for raw in text.splitlines():
         header = DIFF_HEADER.match(raw)
         if header:
             save()
             path = normalize_path(header.group(2))
+            old_path = normalize_path(header.group(1))
             lines, new_line, binary = set(), None, False
             continue
         if raw.startswith("rename to "):
