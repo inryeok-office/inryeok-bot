@@ -19,6 +19,7 @@ class FakeGitHub:
 
     def __init__(self) -> None:
         self.reactions: list[tuple[str, int]] = []
+        self.issue_comments: list[tuple[int, str]] = []
 
     async def get_collaborator_permission(self, *_: object) -> str:
         return self.permission
@@ -36,6 +37,18 @@ class FakeGitHub:
     async def add_comment_eyes_reaction(self, *_: object) -> bool:
         self.reactions.append(("comment", int(_[-1])))
         return True
+
+    async def remove_pull_request_eyes_reaction(self, *_: object) -> bool:
+        return True
+
+    async def remove_comment_eyes_reaction(self, *_: object) -> bool:
+        return True
+
+    async def create_issue_comment(
+        self, _installation: int, _owner: str, _repo: str, number: int, body: str
+    ) -> dict[str, int]:
+        self.issue_comments.append((number, body))
+        return {"id": len(self.issue_comments)}
 
 
 @pytest.fixture

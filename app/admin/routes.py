@@ -23,6 +23,7 @@ from app.jobs.models import (
     AdminAuditLog,
     GlobalReviewSettings,
     JobStatus,
+    OpsIncident,
     RepositorySettings,
     ReviewDomain,
     ReviewJob,
@@ -30,6 +31,7 @@ from app.jobs.models import (
 )
 from app.jobs.repository import JobRepository
 from app.review.domains import PROMPT_VERSION, effective_domains
+from app.review.model_catalog import load_catalog
 from app.review.settings import validate_choice, validate_paths
 
 router = APIRouter(prefix="/admin")
@@ -352,6 +354,7 @@ async def repository_detail(
             repository=repository,
             effective=resolve_repository_policy(global_settings, repository, settings),
             models=settings.allowed_codex_models,
+            model_catalog=load_catalog(settings),
             domains=[item.value for item in ReviewDomain],
             prompt_version=PROMPT_VERSION,
         ),
@@ -379,6 +382,7 @@ async def global_settings_page(
             settings,
             global_settings=value,
             models=settings.allowed_codex_models,
+            model_catalog=load_catalog(settings),
             domains=[item.value for item in ReviewDomain],
             prompt_version=PROMPT_VERSION,
         ),
@@ -418,6 +422,9 @@ async def operations_page(
     running = await session.scalar(
         select(func.count(ReviewJob.id)).where(ReviewJob.status == JobStatus.RUNNING)
     )
+    unresolved_incidents = await session.scalar(
+        select(func.count(OpsIncident.id)).where(OpsIncident.status == "OPEN")
+    )
     last_change = await session.scalar(
         select(AdminAuditLog)
         .where(AdminAuditLog.target_type == "global_processing")
@@ -434,6 +441,7 @@ async def operations_page(
             global_settings=value,
             pending_count=int(pending or 0),
             running_count=int(running or 0),
+            unresolved_incidents=int(unresolved_incidents or 0),
             last_change=last_change,
         ),
     )

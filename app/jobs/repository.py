@@ -200,6 +200,10 @@ class JobRepository:
                 ReviewJob.status == JobStatus.RUNNING,
                 ReviewJob.started_at < cutoff,
                 ReviewJob.attempts < max_attempts,
+                # Once an execution id was committed, the executor may have
+                # accepted the request before a worker crash.  Re-running it
+                # would risk a duplicate Review, so classify it as unknown.
+                ReviewJob.execution_id.is_(None),
             )
             .values(
                 status=JobStatus.PENDING,
@@ -224,6 +228,26 @@ class JobRepository:
             )
             .execution_options(synchronize_session=False)
         )
+        await self.session.execute(
+            update(ReviewJob)
+            .where(
+                ReviewJob.status == JobStatus.RUNNING,
+                ReviewJob.started_at < cutoff,
+                ReviewJob.execution_id.is_not(None),
+                ReviewJob.attempts < max_attempts,
+            )
+            .values(
+                status=JobStatus.FAILED,
+                finished_at=datetime.now(UTC),
+                error_code="UNKNOWN_OUTCOME",
+                error_message="Execution identity exists; operator confirmation required",
+                error_category="INTERNAL",
+                retry_policy="NEVER",
+                user_action_required=True,
+                terminal_outcome="UNKNOWN_OUTCOME",
+            )
+            .execution_options(synchronize_session=False)
+        )
         await self.session.commit()
         return int(getattr(result, "rowcount", 0) or 0)
 
@@ -235,6 +259,12 @@ class JobRepository:
         error_message: str | None = None,
     ) -> None:
         job.status = status
+        if status == JobStatus.SUCCEEDED and not job.terminal_outcome:
+            job.terminal_outcome = "SUCCEEDED"
+        elif status == JobStatus.SKIPPED and not job.terminal_outcome:
+            job.terminal_outcome = error_code or "SKIPPED"
+        elif status == JobStatus.FAILED:
+            job.terminal_outcome = "FAILED_FINAL"
         job.error_code = error_code
         job.error_message = error_message[:4000] if error_message else None
         job.finished_at = datetime.now(UTC)
@@ -271,6 +301,14 @@ class JobRepository:
             head_sha=job.head_sha,
             trigger_type=TriggerType.RETRY,
             retry_of_job_id=job.id,
+            model=job.model,
+            reasoning_effort=job.reasoning_effort,
+            model_source=job.model_source,
+            reasoning_source=job.reasoning_source,
+            model_catalog_version=job.model_catalog_version,
+            schema_hash=job.schema_hash,
+            codex_cli_version=job.codex_cli_version,
+            executor_runtime_version=job.executor_runtime_version,
         )
         self.session.add(retry)
         await self.session.commit()

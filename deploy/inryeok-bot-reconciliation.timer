@@ -1,0 +1,11 @@
+[Unit]
+Description=Run GitHub installation reconciliation inspection
+
+[Timer]
+OnBootSec=10m
+OnUnitActiveSec=30m
+Persistent=true
+Unit=inryeok-bot-reconciliation.service
+
+[Install]
+WantedBy=timers.target

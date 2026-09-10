@@ -21,10 +21,13 @@ from app.jobs.models import (
     InstallationStatus,
     RepositorySettings,
     ReviewJob,
+    ReviewRun,
+    ReviewStatusNotice,
     TriggerType,
     WebhookDelivery,
 )
 from app.jobs.repository import JobRepository, QueueCapacityError
+from app.review.model_catalog import catalog_version
 from app.review.settings import EffectiveReviewSettings
 
 router = APIRouter()
@@ -250,6 +253,46 @@ async def github_webhook(
         await _finish_delivery(session, delivery, DELIVERY_IGNORED, reason)
         return {"accepted": True, "ignored": reason}
 
+    async def status_notice(
+        owner: str, repo: str, number: int, head: str, code: str, body: str
+    ) -> None:
+        """Publish one bounded duplicate/in-progress notice, best effort."""
+        existing = await session.scalar(
+            select(ReviewStatusNotice).where(
+                ReviewStatusNotice.repository_owner == owner,
+                ReviewStatusNotice.repository_name == repo,
+                ReviewStatusNotice.pull_request_number == number,
+                ReviewStatusNotice.head_sha == head,
+                ReviewStatusNotice.notice_code == code,
+            )
+        )
+        if existing is not None:
+            return
+        notice = ReviewStatusNotice(
+            repository_owner=owner,
+            repository_name=repo,
+            pull_request_number=number,
+            head_sha=head,
+            notice_code=code,
+        )
+        session.add(notice)
+        try:
+            await session.commit()
+            posted = await github.create_issue_comment(
+                installation_id,
+                owner,
+                repo,
+                number,
+                body + f"\n\n<!-- inryeok-review-status:{code.casefold()} -->",
+            )
+            notice.github_comment_id = int(posted["id"])
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+        except Exception:
+            await session.rollback()
+            logger.warning("Unable to publish status notice code=%s", code)
+
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
@@ -435,6 +478,72 @@ async def github_webhook(
             trigger = TriggerType.COMMAND
             source_comment_id = comment_event.comment.id
             not_before = None
+            prior_success = await session.scalar(
+                select(ReviewJob)
+                .join(ReviewRun, ReviewRun.job_id == ReviewJob.id)
+                .where(
+                    ReviewJob.installation_id == installation_id,
+                    ReviewJob.repository_owner == owner,
+                    ReviewJob.repository_name == repository_name,
+                    ReviewJob.pull_request_number == pr_number,
+                    ReviewJob.head_sha == head_sha,
+                    ReviewRun.github_review_id.is_not(None),
+                )
+                .order_by(ReviewRun.id.desc())
+                .limit(1)
+            )
+            if prior_success is not None:
+                await status_notice(
+                    owner,
+                    repository_name,
+                    pr_number,
+                    head_sha,
+                    "ALREADY_REVIEWED_CURRENT_HEAD",
+                    (
+                        "현재 커밋은 이미 검토되었습니다. 코드가 변경되면 "
+                        "새 커밋에서 다시 요청해 주세요."
+                    ),
+                )
+                try:
+                    await github.remove_comment_eyes_reaction(
+                        installation_id, owner, repository_name, source_comment_id
+                    )
+                except Exception:
+                    logger.warning("Unable to clean duplicate review reaction")
+                await _finish_delivery(
+                    session, delivery, DELIVERY_IGNORED, "ALREADY_REVIEWED_CURRENT_HEAD"
+                )
+                return {"accepted": True, "created": False, "ignored": "already_reviewed"}
+            in_progress = await session.scalar(
+                select(ReviewJob.id).where(
+                    ReviewJob.installation_id == installation_id,
+                    ReviewJob.repository_owner == owner,
+                    ReviewJob.repository_name == repository_name,
+                    ReviewJob.pull_request_number == pr_number,
+                    ReviewJob.head_sha == head_sha,
+                    ReviewJob.status.in_({"PENDING", "RUNNING"}),
+                )
+            )
+            if in_progress is not None:
+                await status_notice(
+                    owner,
+                    repository_name,
+                    pr_number,
+                    head_sha,
+                    "DUPLICATE_IN_PROGRESS",
+                    (
+                        "현재 커밋에 대한 리뷰가 이미 진행 중입니다. "
+                        "완료되면 Review로 결과를 확인할 수 있습니다."
+                    ),
+                )
+                try:
+                    await github.remove_comment_eyes_reaction(
+                        installation_id, owner, repository_name, source_comment_id
+                    )
+                except Exception:
+                    logger.warning("Unable to clean in-progress review reaction")
+                await _finish_delivery(session, delivery, DELIVERY_IGNORED, "DUPLICATE_IN_PROGRESS")
+                return {"accepted": True, "created": False, "ignored": "in_progress"}
             if effective.command_cooldown_seconds:
                 recent = await session.scalar(
                     select(ReviewJob)
@@ -468,6 +577,19 @@ async def github_webhook(
                 trigger_type=trigger,
                 source_comment_id=source_comment_id,
                 not_before=not_before,
+                model=effective.model,
+                reasoning_effort=effective.reasoning_effort,
+                model_source=(
+                    "REPOSITORY_OVERRIDE"
+                    if repo_settings.override_model is not None
+                    else "GLOBAL_DEFAULT"
+                ),
+                reasoning_source=(
+                    "REPOSITORY_OVERRIDE"
+                    if repo_settings.override_reasoning_effort is not None
+                    else "GLOBAL_DEFAULT"
+                ),
+                model_catalog_version=catalog_version(settings),
             )
         except QueueCapacityError:
             await session.rollback()

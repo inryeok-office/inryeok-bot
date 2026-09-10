@@ -22,6 +22,7 @@ async def reconcile(apply: bool) -> None:
         discovered = await github.list_app_installations()
         installations = list((await session.scalars(select(GitHubInstallation))).all())
         by_external = {item.github_installation_id: item for item in installations}
+        discovered_ids = {int(item["id"]) for item in discovered}
         for item in discovered:
             external_id = int(item["id"])
             installation = by_external.get(external_id)
@@ -43,6 +44,22 @@ async def reconcile(apply: bool) -> None:
                 installation.account_id = account.get("id")
                 installation.account_login = account.get("login")
                 installation.account_type = account.get("type")
+        if apply:
+            for installation in installations:
+                if installation.github_installation_id not in discovered_ids:
+                    installation.status = "REMOVED"
+                    known_repositories = list(
+                        (
+                            await session.scalars(
+                                select(RepositorySettings).where(
+                                    RepositorySettings.installation_id
+                                    == installation.github_installation_id
+                                )
+                            )
+                        ).all()
+                    )
+                    for repo in known_repositories:
+                        repo.installed = False
         result = {
             "installations": 0,
             "repositories": 0,
@@ -51,6 +68,7 @@ async def reconcile(apply: bool) -> None:
             "policy_changes": 0,
             "override_changes": 0,
             "deletes": 0,
+            "identity_updates": 0,
             "apply": apply,
         }
         for installation in installations:
@@ -72,18 +90,28 @@ async def reconcile(apply: bool) -> None:
                     )
                 )
                 continue
-            installation.status = "ACTIVE"
-            installation.last_synced_at = datetime.now(UTC)
+            if apply:
+                installation.status = "ACTIVE"
+                installation.last_synced_at = datetime.now(UTC)
+            remote_ids: set[int] = set()
             for item in remote:
                 full_name = str(item.get("full_name", ""))
                 if "/" not in full_name:
                     continue
                 owner, name = full_name.split("/", 1)
+                if item.get("id") is not None:
+                    remote_ids.add(int(item["id"]))
                 repo = await session.scalar(
                     select(RepositorySettings).where(
                         RepositorySettings.installation_id == installation.github_installation_id,
-                        RepositorySettings.repository_owner.ilike(owner),
-                        RepositorySettings.repository_name.ilike(name),
+                        (
+                            RepositorySettings.github_repository_id == int(item["id"])
+                            if item.get("id") is not None
+                            else (
+                                RepositorySettings.repository_owner.ilike(owner)
+                                & RepositorySettings.repository_name.ilike(name)
+                            )
+                        ),
                     )
                 )
                 result["repositories"] += 1
@@ -109,8 +137,32 @@ async def reconcile(apply: bool) -> None:
                 elif apply:
                     repo.installed = True
                     repo.installation_fk_id = installation.id
+                    if (
+                        repo.repository_owner != owner.casefold()
+                        or repo.repository_name != name.casefold()
+                    ):
+                        result["identity_updates"] += 1
+                        repo.repository_owner = owner.casefold()
+                        repo.repository_name = name.casefold()
                     if item.get("id") is not None:
                         repo.github_repository_id = int(item["id"])
+            if apply:
+                known_repositories = list(
+                    (
+                        await session.scalars(
+                            select(RepositorySettings).where(
+                                RepositorySettings.installation_id
+                                == installation.github_installation_id
+                            )
+                        )
+                    ).all()
+                )
+                for repo in known_repositories:
+                    if (
+                        repo.github_repository_id is not None
+                        and repo.github_repository_id not in remote_ids
+                    ):
+                        repo.installed = False
             if apply:
                 session.add(
                     AdminAuditLog(

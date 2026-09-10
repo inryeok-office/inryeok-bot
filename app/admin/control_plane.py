@@ -315,6 +315,12 @@ def apply_repository_policy_patch(
     """Apply only explicitly supplied fields and return changed field names."""
 
     normalized = validate_repository_policy_patch(patch, settings)
+    candidate_model = normalized.get("override_model", repository.override_model)
+    candidate_effort = normalized.get(
+        "override_reasoning_effort", repository.override_reasoning_effort
+    )
+    if candidate_model is not None:
+        validate_choice("ko", "BALANCED", candidate_model, settings, candidate_effort or "medium")
     changed: list[str] = []
     # Keep legacy materialized columns synchronized from the canonical
     # override command.  They remain compatibility projections only; routes
@@ -391,10 +397,15 @@ def validate_global_policy_patch(patch: Mapping[str, Any], settings: Settings) -
         raise ValueError("unsupported language")
     if "review_profile" in normalized:
         validate_choice("ko", str(normalized["review_profile"]), None, settings)
-    if "model" in normalized and normalized["model"]:
-        validate_choice("ko", "BALANCED", str(normalized["model"]), settings)
-    if "reasoning_effort" in normalized:
-        validate_choice("ko", "BALANCED", None, settings, str(normalized["reasoning_effort"]))
+    candidate_model = normalized.get("model")
+    if "model" in normalized or "reasoning_effort" in normalized:
+        validate_choice(
+            "ko",
+            "BALANCED",
+            str(candidate_model) if candidate_model else None,
+            settings,
+            str(normalized.get("reasoning_effort", "medium")),
+        )
     if "max_findings" in normalized:
         value = int(normalized["max_findings"])
         if not 1 <= value <= 50:
@@ -443,6 +454,9 @@ def apply_global_policy_patch(
     """Apply a validated global PATCH and preserve profile provenance."""
 
     normalized = validate_global_policy_patch(patch, settings)
+    candidate_model = normalized.get("model", global_settings.model)
+    candidate_effort = normalized.get("reasoning_effort", global_settings.reasoning_effort)
+    validate_choice("ko", "BALANCED", candidate_model, settings, candidate_effort or "medium")
     changed: list[str] = []
     for field_name, value in normalized.items():
         if getattr(global_settings, field_name) != value:

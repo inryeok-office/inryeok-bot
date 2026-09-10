@@ -48,6 +48,7 @@ class ReviewProfile(StrEnum):
 
 
 class ReasoningEffort(StrEnum):
+    DEFAULT = "default"
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -178,6 +179,16 @@ class ReviewJob(Base):
     review_profile: Mapped[str | None] = mapped_column(String(32))
     model: Mapped[str | None] = mapped_column(String(128))
     reasoning_effort: Mapped[str | None] = mapped_column(String(16))
+    # Immutable execution-policy snapshots.  These are nullable so historical
+    # jobs are never backfilled with guesses.
+    model_source: Mapped[str | None] = mapped_column(String(32))
+    reasoning_source: Mapped[str | None] = mapped_column(String(32))
+    model_catalog_version: Mapped[str | None] = mapped_column(String(64))
+    schema_hash: Mapped[str | None] = mapped_column(String(64))
+    codex_cli_version: Mapped[str | None] = mapped_column(String(64))
+    executor_runtime_version: Mapped[str | None] = mapped_column(String(64))
+    terminal_outcome: Mapped[str | None] = mapped_column(String(64), index=True)
+    reaction_cleanup_status: Mapped[str | None] = mapped_column(String(32))
     runs: Mapped[list["ReviewRun"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
@@ -375,6 +386,57 @@ class WebhookDelivery(Base):
     repository_name: Mapped[str | None] = mapped_column(String(255))
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OpsIncident(Base):
+    """Safe, deduplicated operational incident state.
+
+    This table intentionally stores identifiers and bounded summaries only;
+    payloads, prompts, source, credentials, and process output do not belong
+    in an alert record.
+    """
+
+    __tablename__ = "ops_incidents"
+    __table_args__ = (UniqueConstraint("incident_key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    incident_key: Mapped[str] = mapped_column(String(180), unique=True, index=True)
+    severity: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="OPEN", index=True)
+    safe_summary: Mapped[str] = mapped_column(String(500))
+    safe_context: Mapped[str | None] = mapped_column(Text)
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=1)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ReviewStatusNotice(Base):
+    """Idempotency record for one user-facing duplicate/in-progress notice."""
+
+    __tablename__ = "review_status_notices"
+    __table_args__ = (
+        UniqueConstraint(
+            "repository_owner",
+            "repository_name",
+            "pull_request_number",
+            "head_sha",
+            "notice_code",
+            name="uq_review_status_notice",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repository_owner: Mapped[str] = mapped_column(String(255))
+    repository_name: Mapped[str] = mapped_column(String(255))
+    pull_request_number: Mapped[int]
+    head_sha: Mapped[str] = mapped_column(String(64))
+    notice_code: Mapped[str] = mapped_column(String(64))
+    github_comment_id: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

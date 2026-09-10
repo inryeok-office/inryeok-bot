@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     max_repository_pending_jobs: int = Field(10, ge=1, le=1_000)
     stale_running_seconds: int = Field(1800, ge=60)
     codex_model_allowlist: str = ""
+    # JSON is deliberately operator-managed rather than scraped from an
+    # undocumented CLI endpoint.  Empty preserves the legacy allowlist.
+    codex_model_catalog_json: str = ""
+    codex_cli_version: str = ""
+    executor_runtime_version: str = ""
+    ops_alert_webhook_url: SecretStr = SecretStr("")
+    ops_alert_cooldown_seconds: int = Field(900, ge=60, le=86400)
+    watchdog_webhook_seconds: int = Field(900, ge=60, le=86400)
+    watchdog_pending_seconds: int = Field(1800, ge=60, le=172800)
     default_review_language: str = "ko"
     default_review_profile: str = "THOROUGH"
 
@@ -155,9 +164,9 @@ class Settings(BaseSettings):
 
     @property
     def allowed_codex_models(self) -> tuple[str, ...]:
-        return tuple(
-            value.strip() for value in self.codex_model_allowlist.split(",") if value.strip()
-        )
+        from app.review.model_catalog import available_model_ids
+
+        return available_model_ids(self)
 
 
 @lru_cache

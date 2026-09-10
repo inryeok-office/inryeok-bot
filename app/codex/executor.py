@@ -42,7 +42,7 @@ class ReviewRequest(BaseModel):
     archive: str = Field(min_length=1, max_length=35_000_000)
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_BYTES)
     model: str | None = Field(default=None, max_length=200)
-    reasoning_effort: str | None = Field(default=None, pattern=r"^(low|medium|high)$")
+    reasoning_effort: str | None = Field(default=None, pattern=r"^(default|low|medium|high)$")
     timeout: int | None = Field(default=None, ge=30, le=3600)
     execution_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
 

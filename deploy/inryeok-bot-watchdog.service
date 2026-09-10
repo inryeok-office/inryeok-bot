@@ -1,0 +1,9 @@
+[Unit]
+Description=Inryeok Bot stale-state watchdog
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/inryeok-bot/app
+ExecStart=/usr/bin/docker compose exec -T worker python scripts/watchdog.py --apply
+User=root

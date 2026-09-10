@@ -1,0 +1,7 @@
+[Unit]
+Description=Inspect stale Inryeok Bot backup partials
+
+[Service]
+Type=oneshot
+ExecStart=/opt/inryeok-bot/app/scripts/cleanup_backup_partials.sh
+User=root

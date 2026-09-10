@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from app.codex.schemas import ReviewOutput
 from app.config import Settings
+from app.review.model_catalog import validate_model_effort
 
 MAX_PROCESS_OUTPUT = 2_000_000
 MAX_CAPTURE_BYTES = 16_000
@@ -444,15 +445,20 @@ class CodexRunner:
             "-",
         ]
         if model:
-            if model not in self.settings.allowed_codex_models:
-                raise CodexError("CODEX_MODEL_NOT_ALLOWED", "Codex model is not allowed")
+            try:
+                validate_model_effort(self.settings, model, reasoning_effort or "default")
+            except ValueError as exc:
+                raise CodexError("CODEX_MODEL_NOT_ALLOWED", str(exc)) from exc
             command[2:2] = ["--model", model]
         if reasoning_effort:
-            if reasoning_effort not in {"low", "medium", "high"}:
+            if reasoning_effort == "default":
+                reasoning_effort = None
+            elif reasoning_effort not in {"low", "medium", "high"}:
                 raise CodexError(
                     "CODEX_REASONING_NOT_ALLOWED", "Codex reasoning effort is not allowed"
                 )
-            command[2:2] = ["--config", f'model_reasoning_effort="{reasoning_effort}"']
+            if reasoning_effort:
+                command[2:2] = ["--config", f'model_reasoning_effort="{reasoning_effort}"']
         safe_environment = {
             "PATH",
             "HOME",

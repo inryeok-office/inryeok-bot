@@ -478,7 +478,8 @@ async def test_same_comment_id_with_new_delivery_is_not_reprocessed(app_client):
     body, headers = signed(payload, "issue_comment", "comment-delivery-2")
     assert (await client.post("/webhooks/github", content=body, headers=headers)).json() == {
         "accepted": True,
-        "ignored": "command_cooldown",
+        "created": False,
+        "ignored": "in_progress",
     }
 
 
@@ -501,7 +502,8 @@ async def test_distinct_manual_commands_can_review_the_same_head(app_client):
     body, headers = signed(payload, "issue_comment", "manual-command-2")
     assert (await client.post("/webhooks/github", content=body, headers=headers)).json() == {
         "accepted": True,
-        "ignored": "command_cooldown",
+        "created": False,
+        "ignored": "in_progress",
     }
     async with factory() as session:
         assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 1

@@ -10,6 +10,7 @@ from app.jobs.models import (
     ReviewLanguage,
     ReviewProfile,
 )
+from app.review.model_catalog import validate_model_effort
 
 MAX_FINDINGS = 50
 MIN_CONFIDENCE = 0.8
@@ -73,10 +74,10 @@ def validate_choice(
         raise ValueError("unsupported language")
     if profile not in {item.value for item in ReviewProfile}:
         raise ValueError("unsupported review profile")
-    if model and model not in settings.allowed_codex_models:
-        raise ValueError("model is not allowed")
-    if reasoning_effort not in {item.value for item in ReasoningEffort}:
-        raise ValueError("reasoning effort is not allowed")
+    try:
+        validate_model_effort(settings, model, reasoning_effort)
+    except ValueError:
+        raise
 
 
 def validate_paths(patterns: str) -> tuple[str, ...]:

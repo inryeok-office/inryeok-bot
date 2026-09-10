@@ -174,6 +174,16 @@ class GitHubClient:
             result.extend(page)
         return result
 
+    async def list_issue_comments(
+        self, installation_id: int, owner: str, repo: str, number: int
+    ) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        async for page in self._pages(
+            installation_id, f"/repos/{owner}/{repo}/issues/{number}/comments"
+        ):
+            result.extend(page)
+        return result
+
     async def get_collaborator_permission(
         self, installation_id: int, owner: str, repo: str, username: str
     ) -> str:
@@ -227,6 +237,33 @@ class GitHubClient:
             owner,
             repo,
             f"/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
+        )
+
+    async def _remove_eyes_reaction(self, installation_id: int, path: str) -> bool:
+        reactions = list((await self._request(installation_id, "GET", path)).json())
+        bot_login = self.settings.github_bot_login.casefold()
+        removed = False
+        for reaction in reactions:
+            if (
+                reaction.get("content") == "eyes"
+                and str(reaction.get("user", {}).get("login", "")).casefold() == bot_login
+            ):
+                await self._request(installation_id, "DELETE", f"{path}/{int(reaction['id'])}")
+                removed = True
+        return removed
+
+    async def remove_pull_request_eyes_reaction(
+        self, installation_id: int, owner: str, repo: str, number: int
+    ) -> bool:
+        return await self._remove_eyes_reaction(
+            installation_id, f"/repos/{owner}/{repo}/issues/{number}/reactions"
+        )
+
+    async def remove_comment_eyes_reaction(
+        self, installation_id: int, owner: str, repo: str, comment_id: int
+    ) -> bool:
+        return await self._remove_eyes_reaction(
+            installation_id, f"/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions"
         )
 
     async def create_issue_comment(

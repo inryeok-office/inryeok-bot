@@ -1,5 +1,8 @@
+import hashlib
 import json
 import logging
+from dataclasses import replace
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -20,6 +23,7 @@ from app.jobs.models import (
 from app.review.deduplicator import fingerprint
 from app.review.diff import RepositoryCheckout
 from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
+from app.review.model_catalog import catalog_version
 from app.review.publisher import build_review_payload, review_marker
 from app.review.settings import EffectiveReviewSettings, resolve
 from app.review.validator import validate_findings_with_diagnostics
@@ -28,7 +32,9 @@ logger = logging.getLogger(__name__)
 
 
 class ReviewSkipped(RuntimeError):
-    pass
+    def __init__(self, message: str, outcome_code: str = "SKIPPED") -> None:
+        super().__init__(message)
+        self.outcome_code = outcome_code
 
 
 class ReviewService:
@@ -61,6 +67,14 @@ class ReviewService:
         effective = resolve(global_settings, config, self.github.settings)
         if not effective.enabled:
             raise ReviewSkipped("repository is disabled")
+        # New jobs carry their effective model/effort from enqueue time. Do
+        # not silently change an in-flight job when policy is edited later.
+        if job.model_source is not None or job.reasoning_source is not None:
+            effective = replace(
+                effective,
+                model=job.model,
+                reasoning_effort=job.reasoning_effort or "default",
+            )
         # A repeated /review for the same head must not spend another Codex
         # execution merely to discover the existing GitHub marker afterwards.
         # Compare the immutable execution inputs as well as the head so a
@@ -85,11 +99,35 @@ class ReviewService:
                 prior_job.model == effective.model
                 and prior_job.reasoning_effort == effective.reasoning_effort
             ):
-                raise ReviewSkipped("same review input already completed")
+                raise ReviewSkipped(
+                    "same review input already completed", "ALREADY_REVIEWED_CURRENT_HEAD"
+                )
         # Preserve the effective policy used by this job for auditability.
         job.model = effective.model
         job.reasoning_effort = effective.reasoning_effort
         job.review_profile = effective.review_profile
+        job.model_source = job.model_source or (
+            "REPOSITORY_OVERRIDE" if config.override_model is not None else "GLOBAL_DEFAULT"
+        )
+        job.reasoning_source = job.reasoning_source or (
+            "REPOSITORY_OVERRIDE"
+            if config.override_reasoning_effort is not None
+            else "GLOBAL_DEFAULT"
+        )
+        job.model_catalog_version = job.model_catalog_version or catalog_version(
+            self.github.settings
+        )
+        # The application schema is the stable source of truth in the web/
+        # worker image.  A missing file remains nullable rather than guessed.
+        app_schema = Path("review-schema.json")
+        if app_schema.is_file():
+            job.schema_hash = hashlib.sha256(app_schema.read_bytes()).hexdigest()
+        job.codex_cli_version = (
+            job.codex_cli_version or self.github.settings.codex_cli_version or None
+        )
+        job.executor_runtime_version = (
+            job.executor_runtime_version or self.github.settings.executor_runtime_version or None
+        )
         patterns = list(effective.ignored_paths)
         await self._execute_checkout(job, config, patterns, effective, execution_id)
 
@@ -348,5 +386,6 @@ class ReviewService:
                     github_comment_id=None,
                 )
             )
+        job.terminal_outcome = "SUCCEEDED_NO_FINDINGS" if not findings else "SUCCEEDED"
         await self.session.commit()
         return len(findings)

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run backup partial inspection
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+Persistent=true
+Unit=inryeok-bot-backup-cleanup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Inryeok Bot watchdog periodically
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=5m
+Persistent=true
+Unit=inryeok-bot-watchdog.service
+
+[Install]
+WantedBy=timers.target

@@ -143,6 +143,35 @@ async def finish_after_error(
     await repository.finish(job, status, error_code, error_message)
 
 
+async def cleanup_review_start_reaction(github: GitHubClient, job: ReviewJob) -> str:
+    """Best-effort terminal reaction cleanup, independent of job outcome."""
+    try:
+        if job.source_comment_id is not None:
+            method = getattr(github, "remove_comment_eyes_reaction", None)
+            if method is None:
+                return "UNSUPPORTED"
+            await method(
+                job.installation_id,
+                job.repository_owner,
+                job.repository_name,
+                job.source_comment_id,
+            )
+        else:
+            method = getattr(github, "remove_pull_request_eyes_reaction", None)
+            if method is None:
+                return "UNSUPPORTED"
+            await method(
+                job.installation_id,
+                job.repository_owner,
+                job.repository_name,
+                job.pull_request_number,
+            )
+        return "REMOVED_OR_ABSENT"
+    except Exception:
+        logger.warning("Unable to clean up review-start reaction for job %s", job.id)
+        return "FAILED"
+
+
 def _apply_failure(job: ReviewJob, failure: ReviewFailure) -> None:
     """Copy only the bounded, structured failure contract onto a Job."""
     job.error_code = failure.error_code
@@ -206,8 +235,10 @@ async def run_worker() -> None:
                 await repository.finish(job, JobStatus.SUCCEEDED)
             except ReviewSkipped as exc:
                 await finish_after_error(
-                    session, repository, job, JobStatus.SKIPPED, "SKIPPED", str(exc)
+                    session, repository, job, JobStatus.SKIPPED, exc.outcome_code, str(exc)
                 )
+                job.terminal_outcome = exc.outcome_code
+                await session.commit()
             except CodexError as exc:
                 assert github is not None
                 attempts = job.attempts
@@ -268,6 +299,11 @@ async def run_worker() -> None:
                 await publish_failure_notice(repository, github, job, failure)
             finally:
                 if github is not None:
+                    if job.status in {JobStatus.SUCCEEDED, JobStatus.SKIPPED, JobStatus.FAILED}:
+                        job.reaction_cleanup_status = await cleanup_review_start_reaction(
+                            github, job
+                        )
+                        await session.commit()
                     await github.http.aclose()
 
 
