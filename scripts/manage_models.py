@@ -8,6 +8,7 @@ explicit catalog file.  Verification evidence is recorded only through
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -20,9 +21,12 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config import get_settings
+from app.db.session import get_session_factory
+from app.jobs.models import AdminAuditLog
 from app.review.model_catalog import VALID_EFFORTS, load_catalog
 
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
+SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 def _catalog_path(argument: str | None) -> Path:
@@ -62,6 +66,42 @@ def _write(path: Path, values: list[dict[str, Any]]) -> None:
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+async def _record_audit(
+    *, action: str, model_id: str, actor: str, reason: str, verification_id: str | None = None
+) -> None:
+    summary = f"model={model_id}; reason={' '.join(reason.split())[:240]}"
+    if verification_id:
+        summary += f"; verification_id={verification_id}"
+    async with get_session_factory()() as session:
+        session.add(
+            AdminAuditLog(
+                actor_login=actor[:255],
+                action=action[:100],
+                target_type="model_catalog",
+                target_id=model_id[:128],
+                summary=summary,
+            )
+        )
+        await session.commit()
+
+
+def _audit(
+    *, action: str, model_id: str, actor: str, reason: str, verification_id: str | None = None
+) -> None:
+    try:
+        asyncio.run(
+            _record_audit(
+                action=action,
+                model_id=model_id,
+                actor=actor,
+                reason=reason,
+                verification_id=verification_id,
+            )
+        )
+    except Exception as exc:
+        raise SystemExit("catalog audit could not be recorded") from exc
 
 
 def _safe_spec(item: dict[str, Any]) -> dict[str, Any]:
@@ -158,13 +198,24 @@ def main() -> None:
                 }
             )
         _write(path, values)
+        _audit(
+            action="MODEL_CANDIDATE_ADDED",
+            model_id=args.model,
+            actor=args.actor,
+            reason=args.reason,
+        )
         print(json.dumps({"event": "candidate_added", "model_id": args.model, "actor": args.actor}))
         return
 
     if existing is None:
         raise SystemExit("model candidate does not exist")
     if args.command == "record-verification":
-        if not args.cli_version or not args.schema_hash or not args.verification_id:
+        if (
+            not args.cli_version
+            or not args.schema_hash
+            or not args.verification_id
+            or not SAFE_ID_RE.fullmatch(args.verification_id)
+        ):
             raise SystemExit(
                 "record-verification requires cli version, schema hash, and verification id"
             )
@@ -182,6 +233,13 @@ def main() -> None:
             }
         )
         _write(path, values)
+        _audit(
+            action="MODEL_VERIFICATION_RECORDED",
+            model_id=args.model,
+            actor=args.actor,
+            reason=args.reason,
+            verification_id=args.verification_id,
+        )
         print(
             json.dumps(
                 {"event": "verification_recorded", "model_id": args.model, "actor": args.actor}
@@ -194,6 +252,12 @@ def main() -> None:
     existing["failure_code"] = "OPERATOR_DISABLED"
     existing["failure_message"] = args.reason[:300]
     _write(path, values)
+    _audit(
+        action="MODEL_RETIRED" if args.command == "retire" else "MODEL_DISABLED",
+        model_id=args.model,
+        actor=args.actor,
+        reason=args.reason,
+    )
     print(json.dumps({"event": args.command, "model_id": args.model, "actor": args.actor}))
 
 
