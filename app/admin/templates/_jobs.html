@@ -1,3 +1,19 @@
-<div class="table-wrap"><table><caption class="sr-only">리뷰 작업 목록</caption><thead><tr><th>작업</th><th>저장소</th><th>트리거</th><th>상태</th><th>오류</th><th>단계</th><th>시도</th><th>생성 시각</th></tr></thead><tbody>
-{% for job in jobs %}<tr><td><a href="/admin/jobs/{{ job.id }}">#{{ job.id }}</a></td><td>{{ job.repository_owner }}/{{ job.repository_name }}<br><small>PR #{{ job.pull_request_number }}</small></td><td>{{ '수동' if job.trigger_type.value == 'COMMAND' else '자동' }}</td><td>{{ job.status.value }}</td><td>{% if job.error_code %}<span class="danger-text">{{ job.error_code }}</span>{% else %}—{% endif %}</td><td>{{ job.error_stage or '—' }}</td><td>{{ job.attempts }}</td><td>{{ job.created_at }}</td></tr>{% else %}<tr><td colspan="8">표시할 작업이 없습니다.</td></tr>{% endfor %}
-</tbody></table></div>
+{% from "_macros.html" import status, trigger_label, status_label %}
+<div class="table-wrap">
+  <table class="data-table">
+    <caption class="sr-only">리뷰 작업 목록</caption>
+    <thead><tr><th scope="col">상태</th><th scope="col">저장소 · PR</th><th scope="col">요청</th><th scope="col">요청 시각</th><th scope="col">결과</th><th scope="col">작업</th></tr></thead>
+    <tbody>
+    {% for job in jobs %}
+      <tr>
+        <td>{{ status(job.status.value) }}</td>
+        <td><a class="repo-name" href="/admin/jobs/{{ job.id }}">{{ job.repository_owner }}/{{ job.repository_name }}</a><span class="repo-meta">PR #{{ job.pull_request_number }} · <code>{{ job.head_sha[:10] }}</code></span></td>
+        <td>{{ trigger_label(job.trigger_type) }}</td>
+        <td><time datetime="{{ job.created_at.isoformat() if job.created_at else '' }}">{{ job.created_at }}</time></td>
+        <td>{% if job.status.value == 'FAILED' %}<span class="text-danger">조치 필요</span>{% elif job.status.value == 'SUCCEEDED' %}<span class="text-success">완료</span>{% elif job.status.value == 'SKIPPED' %}<span class="muted">정책 또는 중복으로 건너뜀</span>{% else %}<span class="muted">{{ status_label(job.status.value) }}</span>{% endif %}</td>
+        <td><a class="button small secondary" href="/admin/jobs/{{ job.id }}">상세</a></td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="empty">표시할 리뷰 작업이 없습니다.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>

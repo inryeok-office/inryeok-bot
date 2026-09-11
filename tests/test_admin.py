@@ -15,7 +15,16 @@ from app.admin.auth import (
 )
 from app.admin.oauth import safe_admin_redirect
 from app.config import Settings, get_settings
-from app.jobs.models import AdminAuditLog, AdminSession, GlobalReviewSettings, RepositorySettings
+from app.jobs.models import (
+    AdminAuditLog,
+    AdminSession,
+    GlobalReviewSettings,
+    JobStatus,
+    RepositorySettings,
+    ReviewJob,
+    ReviewRun,
+    TriggerType,
+)
 from app.main import app
 
 
@@ -110,8 +119,8 @@ async def test_admin_console_uses_korean_operational_labels(app_client) -> None:
     client, _, _, _, _ = await authenticated_repository(app_client)
     response = await client.get("/admin")
     assert response.status_code == 200
-    assert "대시보드" in response.text
-    assert "운영 상태" in response.text
+    assert "개요" in response.text
+    assert "전체 운영 상태" in response.text
     assert "리뷰 작업" in response.text
     assert "Review jobs" not in response.text
 
@@ -126,6 +135,88 @@ async def test_admin_detail_presets_are_explained_and_accessible(app_client) -> 
     assert "상세 검토" in response.text
     assert 'name="review_profile"' in response.text
     assert "리뷰 품질" in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_console_information_architecture_has_five_sections(app_client) -> None:
+    client, _, _, _, repository_id = await authenticated_repository(app_client)
+    paths = (
+        "/admin",
+        "/admin/repositories",
+        f"/admin/repositories/{repository_id}",
+        "/admin/jobs",
+        "/admin/usage",
+        "/admin/settings",
+        "/admin/audit",
+        "/admin/operations",
+    )
+    for path in paths:
+        response = await client.get(path)
+        assert response.status_code == 200, path
+        assert "�" not in response.text, path
+    dashboard = (await client.get("/admin")).text
+    assert dashboard.count('class="nav"') == 1
+    assert all(label in dashboard for label in ("개요", "저장소", "리뷰", "운영", "설정"))
+
+
+@pytest.mark.asyncio
+async def test_admin_empty_model_catalog_explains_cli_default(app_client) -> None:
+    client, *_ = await authenticated_repository(app_client)
+    response = await client.get("/admin/settings")
+    assert response.status_code == 200
+    assert "현재 CLI 기본 모델을 사용 중입니다" in response.text
+    assert "검증된 선택 모델이 없습니다" in response.text
+    assert 'name="model"' not in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_job_detail_explains_failure_and_finding_pipeline(app_client) -> None:
+    client, factory, *_ = await authenticated_repository(app_client)
+    async with factory() as session:
+        job = ReviewJob(
+            delivery_id="admin-detail-job",
+            installation_id=1,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=7,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.COMMAND,
+            status=JobStatus.FAILED,
+            attempts=1,
+            error_code="OUTPUT_SCHEMA_MISMATCH",
+            error_category="OUTPUT",
+            error_stage="validation",
+            user_action_required=True,
+        )
+        session.add(job)
+        await session.flush()
+        session.add(
+            ReviewRun(
+                job_id=job.id,
+                base_sha="a" * 40,
+                head_sha="b" * 40,
+                summary="safe summary",
+                reviewed_file_count=1,
+                finding_count=1,
+                raw_findings_count=2,
+                schema_valid_findings_count=1,
+                scope_valid_findings_count=1,
+                evidence_findings_count=1,
+                deduplicated_findings_count=1,
+                rejected_findings_count=0,
+                published_findings_count=1,
+                comparison_new_count=1,
+            )
+        )
+        await session.commit()
+        job_id = job.id
+    response = await client.get(f"/admin/jobs/{job_id}")
+    assert response.status_code == 200
+    assert "조치 필요" in response.text
+    assert "Finding 처리" in response.text
+    assert "모델 출력" in response.text
+    assert "�" not in response.text
 
 
 def test_installation_trust_does_not_depend_on_account_name() -> None:
@@ -268,7 +359,7 @@ async def test_audit_log_page_is_available_to_authenticated_admin(app_client) ->
     client, _, _, _, _ = await authenticated_repository(app_client)
     response = await client.get("/admin/audit")
     assert response.status_code == 200
-    assert "이벤트 · 감사" in response.text
+    assert "감사 기록" in response.text
 
 
 @pytest.mark.asyncio

@@ -12,8 +12,8 @@ async def test_usage_page_is_available_for_admin_and_has_empty_state(app_client)
     client, *_ = await authenticated_repository(app_client)
     response = await client.get("/admin/usage?period=7")
     assert response.status_code == 200
-    assert "사용량 및 성공률" in response.text
-    assert "선택한 기간에 작업이 없습니다." in response.text
+    assert "성공률과 검토 결과" in response.text
+    assert "작업이 없습니다" in response.text
 
 
 @pytest.mark.asyncio
@@ -80,4 +80,4 @@ async def test_usage_metrics_aggregate_jobs_and_review_findings(app_client) -> N
     assert {row.label for row in metrics.by_trigger} == {"AUTO", "COMMAND"}
     response = await client.get("/admin/usage?period=7")
     assert response.status_code == 200
-    assert "SCHEMA" in response.text
+    assert "실패 분류" in response.text

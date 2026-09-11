@@ -15,7 +15,7 @@ async def test_operations_page_has_pause_resume_control_and_dashboard_link(app_c
     response = await client.get("/admin/operations")
     assert response.status_code == 200
     assert "/admin/operations/resume" in response.text
-    assert "리뷰 처리 재개" in response.text
+    assert "처리 재개" in response.text
     dashboard = await client.get("/admin")
     assert 'href="/admin/operations"' in dashboard.text
 

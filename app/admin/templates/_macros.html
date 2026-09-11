@@ -1,4 +1,22 @@
-{% macro status_label(value) -%}{{ {'PENDING':'대기','RETRY_PENDING':'재시도 대기','SCHEDULED':'예약','RUNNING':'실행 중','SUCCEEDED':'성공','FAILED':'실패','SKIPPED':'건너뜀','CANCELLED':'취소','PAUSED':'일시중지','COMMAND':'수동 요청','AUTO':'자동 리뷰','ACTIVE':'정상','INACTIVE':'비활성','ENABLED':'사용'}.get(value|string, value) }}{%- endmacro %}
-{% macro status_class(value) -%}{%- if value|string in ['SUCCEEDED','ACTIVE','ENABLED'] -%}success{%- elif value|string in ['FAILED','CANCELLED','INACTIVE'] -%}danger{%- elif value|string in ['RUNNING','COMMAND'] -%}info{%- elif value|string in ['PENDING','RETRY_PENDING','SCHEDULED','PAUSED'] -%}warning{%- else -%}neutral{%- endif -%}{%- endmacro %}
-{% macro status(value, label=None) -%}<span class="status {{ status_class(value) }}"><span class="status-dot" aria-hidden="true"></span>{{ label or status_label(value) }}</span>{%- endmacro %}
-{% macro breadcrumb(items) -%}<nav class="breadcrumb" aria-label="현재 위치">{% for item in items %}{% if not loop.first %}<span aria-hidden="true">/</span>{% endif %}{% if item.href %}<a href="{{ item.href }}">{{ item.label }}</a>{% else %}<span>{{ item.label }}</span>{% endif %}{% endfor %}</nav>{%- endmacro %}
+{% macro status_label(value) -%}
+  {% set raw = value.value if value.value is defined else value|string %}
+  {{ {'PENDING': '대기 중', 'RETRY_PENDING': '재시도 대기', 'SCHEDULED': '예약됨', 'RUNNING': '처리 중', 'SUCCEEDED': '성공', 'FAILED': '실패', 'SKIPPED': '건너뜀', 'CANCELLED': '취소됨', 'PAUSED': '일시중지', 'ACTIVE': '정상', 'INACTIVE': '비활성', 'ENABLED': '사용', 'DISABLED': '사용 안 함', 'OPEN': '진행 중', 'RESOLVED': '복구됨', 'ACKNOWLEDGED': '확인 필요'}.get(raw, raw) }}
+{%- endmacro %}
+{% macro status_class(value) -%}
+  {% set raw = value.value if value.value is defined else value|string %}
+  {%- if raw in ['SUCCEEDED', 'ACTIVE', 'ENABLED', 'RESOLVED'] -%}success{%- elif raw in ['FAILED', 'CANCELLED', 'INACTIVE'] -%}danger{%- elif raw in ['RUNNING', 'OPEN'] -%}info{%- elif raw in ['PENDING', 'RETRY_PENDING', 'SCHEDULED', 'PAUSED', 'ACKNOWLEDGED'] -%}warning{%- else -%}neutral{%- endif -%}
+{%- endmacro %}
+{% macro status(value, label=None) -%}
+  {% set raw = value.value if value.value is defined else value|string %}
+  <span class="status {{ status_class(raw) }}"><span class="status-dot" aria-hidden="true"></span>{{ label or status_label(raw) }}</span>
+{%- endmacro %}
+{% macro breadcrumb(items) -%}
+  <nav class="breadcrumb" aria-label="현재 위치">
+    {% for item in items %}{% if not loop.first %}<span aria-hidden="true">/</span>{% endif %}{% if item.href %}<a href="{{ item.href }}">{{ item.label }}</a>{% else %}<span aria-current="page">{{ item.label }}</span>{% endif %}{% endfor %}
+  </nav>
+{%- endmacro %}
+{% macro provenance(value) -%}
+  {% if value in ['repository', 'REPOSITORY', '저장소'] %}저장소 설정{% elif value in ['global', 'GLOBAL', '전역'] %}전역 설정{% else %}CLI 기본값{% endif %}
+{%- endmacro %}
+{% macro profile_label(value) -%}{{ {'CONSERVATIVE': '핵심 검토', 'BALANCED': '균형 검토', 'THOROUGH': '상세 검토'}.get(value, value or '미설정') }}{%- endmacro %}
+{% macro trigger_label(value) -%}{% set raw = value.value if value.value is defined else value|string %}{{ {'COMMAND': '수동 /review', 'AUTO': '자동 리뷰', 'RETRY': '재시도'}.get(raw, raw) }}{%- endmacro %}
