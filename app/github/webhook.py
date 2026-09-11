@@ -27,7 +27,7 @@ from app.jobs.models import (
     WebhookDelivery,
 )
 from app.jobs.repository import JobRepository, QueueCapacityError
-from app.review.model_catalog import catalog_version
+from app.review.model_catalog import CLI_DEFAULT, catalog_version, spec_for
 from app.review.settings import EffectiveReviewSettings
 
 router = APIRouter()
@@ -563,6 +563,7 @@ async def github_webhook(
                 )
                 if recent is not None:
                     return await ignored("command_cooldown")
+        model_spec = spec_for(settings, effective.model)
         try:
             job, created = await JobRepository(session).enqueue(
                 max_pending_jobs=settings.max_pending_jobs,
@@ -583,6 +584,8 @@ async def github_webhook(
                     "REPOSITORY_OVERRIDE"
                     if repo_settings.override_model is not None
                     else "GLOBAL_DEFAULT"
+                    if effective.model is not None
+                    else CLI_DEFAULT
                 ),
                 reasoning_source=(
                     "REPOSITORY_OVERRIDE"
@@ -590,6 +593,12 @@ async def github_webhook(
                     else "GLOBAL_DEFAULT"
                 ),
                 model_catalog_version=catalog_version(settings),
+                model_catalog_entry_id=model_spec.model_id if model_spec is not None else None,
+                model_verification_id=(
+                    (model_spec.verification_id or model_spec.version)
+                    if model_spec is not None
+                    else None
+                ),
             )
         except QueueCapacityError:
             await session.rollback()

@@ -167,9 +167,9 @@ async def test_admin_empty_model_catalog_explains_cli_default(app_client) -> Non
     client, *_ = await authenticated_repository(app_client)
     response = await client.get("/admin/settings")
     assert response.status_code == 200
-    assert "현재 CLI 기본 모델을 사용 중입니다" in response.text
+    assert "Codex CLI 기본 모델 사용 중" in response.text
     assert "검증된 선택 모델이 없습니다" in response.text
-    assert 'name="model"' not in response.text
+    assert 'name="model"' in response.text
 
 
 @pytest.mark.asyncio

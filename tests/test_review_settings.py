@@ -14,7 +14,10 @@ def _settings() -> Settings:
         github_bot_login="review-bot[bot]",
         admin_session_secret="test-session-secret",
         allowed_github_accounts="example",
-        codex_model_allowlist="approved-model",
+        codex_model_catalog_json=(
+            '[{"model_id":"approved-model","supported_efforts":["medium"],'
+            '"enabled":true,"availability_status":"VERIFIED"}]'
+        ),
     )
 
 

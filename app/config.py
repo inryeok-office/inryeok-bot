@@ -57,8 +57,9 @@ class Settings(BaseSettings):
     stale_running_seconds: int = Field(1800, ge=60)
     codex_model_allowlist: str = ""
     # JSON is deliberately operator-managed rather than scraped from an
-    # undocumented CLI endpoint.  Empty preserves the legacy allowlist.
+    # undocumented CLI endpoint. Empty means no selectable catalog entries.
     codex_model_catalog_json: str = ""
+    codex_model_catalog_file: Path | None = None
     codex_cli_version: str = ""
     executor_runtime_version: str = ""
     ops_alert_webhook_url: SecretStr = SecretStr("")

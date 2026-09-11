@@ -21,6 +21,7 @@ from app.jobs.models import (
     ReviewJob,
     ReviewRun,
 )
+from app.review.model_catalog import normalize_model
 from app.review.settings import (
     EffectiveReviewSettings,
     resolve,
@@ -37,6 +38,7 @@ class PolicySource(StrEnum):
     PROCESSING_STATE = "PROCESSING_STATE"
     PROFILE_DEFAULT = "PROFILE_DEFAULT"
     ENVIRONMENT_LIMIT = "ENVIRONMENT_LIMIT"
+    CLI_DEFAULT = "CLI_DEFAULT"
 
 
 class BlockReason(StrEnum):
@@ -133,6 +135,14 @@ def _source(repository_override: Any, global_value: Any) -> PolicySource:
     )
 
 
+def _model_source(repository_override: str | None, global_value: str | None) -> PolicySource:
+    if repository_override is not None:
+        return PolicySource.REPOSITORY_OVERRIDE
+    if global_value is not None:
+        return PolicySource.GLOBAL_DEFAULT
+    return PolicySource.CLI_DEFAULT
+
+
 def resolve_repository_policy(
     global_settings: GlobalReviewSettings,
     repository: RepositorySettings,
@@ -191,7 +201,7 @@ def resolve_repository_policy(
         "review_profile": _source(
             repository.override_review_profile, global_settings.review_profile
         ),
-        "model": _source(repository.override_model, global_settings.model),
+        "model": _model_source(repository.override_model, global_settings.model),
         "reasoning_effort": _source(
             repository.override_reasoning_effort, global_settings.reasoning_effort
         ),
@@ -267,7 +277,7 @@ def validate_repository_policy_patch(
         validate_choice("ko", profile, None, settings)
         normalized["override_review_profile"] = profile
     if "override_model" in normalized and normalized["override_model"]:
-        normalized["override_model"] = str(normalized["override_model"])
+        normalized["override_model"] = normalize_model(str(normalized["override_model"]))
         validate_choice("ko", "BALANCED", normalized["override_model"], settings)
     if "override_reasoning_effort" in normalized and normalized["override_reasoning_effort"]:
         validate_choice(
@@ -397,7 +407,9 @@ def validate_global_policy_patch(patch: Mapping[str, Any], settings: Settings) -
         raise ValueError("unsupported language")
     if "review_profile" in normalized:
         validate_choice("ko", str(normalized["review_profile"]), None, settings)
-    candidate_model = normalized.get("model")
+    candidate_model = normalize_model(normalized.get("model"))
+    if "model" in normalized:
+        normalized["model"] = candidate_model
     if "model" in normalized or "reasoning_effort" in normalized:
         validate_choice(
             "ko",

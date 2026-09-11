@@ -184,6 +184,8 @@ class ReviewJob(Base):
     model_source: Mapped[str | None] = mapped_column(String(32))
     reasoning_source: Mapped[str | None] = mapped_column(String(32))
     model_catalog_version: Mapped[str | None] = mapped_column(String(64))
+    model_catalog_entry_id: Mapped[str | None] = mapped_column(String(128))
+    model_verification_id: Mapped[str | None] = mapped_column(String(128))
     schema_hash: Mapped[str | None] = mapped_column(String(64))
     codex_cli_version: Mapped[str | None] = mapped_column(String(64))
     executor_runtime_version: Mapped[str | None] = mapped_column(String(64))

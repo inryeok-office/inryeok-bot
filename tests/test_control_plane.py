@@ -21,7 +21,10 @@ def _settings() -> Settings:
         github_webhook_secret="test-secret",
         github_bot_login="review-bot[bot]",
         admin_session_secret="test-session-secret",
-        codex_model_allowlist="approved-model",
+        codex_model_catalog_json=(
+            '[{"model_id":"approved-model","supported_efforts":["medium"],'
+            '"enabled":true,"availability_status":"VERIFIED"}]'
+        ),
     )
 
 

@@ -23,7 +23,7 @@ from app.jobs.models import (
 from app.review.deduplicator import fingerprint
 from app.review.diff import RepositoryCheckout
 from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
-from app.review.model_catalog import catalog_version
+from app.review.model_catalog import CLI_DEFAULT, catalog_version, spec_for
 from app.review.publisher import build_review_payload, review_marker
 from app.review.settings import EffectiveReviewSettings, resolve
 from app.review.validator import validate_findings_with_diagnostics
@@ -109,6 +109,12 @@ class ReviewService:
         job.model_source = job.model_source or (
             "REPOSITORY_OVERRIDE" if config.override_model is not None else "GLOBAL_DEFAULT"
         )
+        if (
+            effective.model is None
+            and config.override_model is None
+            and global_settings.model is None
+        ):
+            job.model_source = CLI_DEFAULT
         job.reasoning_source = job.reasoning_source or (
             "REPOSITORY_OVERRIDE"
             if config.override_reasoning_effort is not None
@@ -116,6 +122,13 @@ class ReviewService:
         )
         job.model_catalog_version = job.model_catalog_version or catalog_version(
             self.github.settings
+        )
+        model_spec = spec_for(self.github.settings, effective.model)
+        job.model_catalog_entry_id = job.model_catalog_entry_id or (
+            model_spec.model_id if model_spec is not None else None
+        )
+        job.model_verification_id = job.model_verification_id or (
+            (model_spec.verification_id or model_spec.version) if model_spec is not None else None
         )
         # The application schema is the stable source of truth in the web/
         # worker image.  A missing file remains nullable rather than guessed.

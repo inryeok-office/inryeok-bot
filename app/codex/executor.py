@@ -41,7 +41,9 @@ MAX_EXECUTION_RECORDS = 1000
 class ReviewRequest(BaseModel):
     archive: str = Field(min_length=1, max_length=35_000_000)
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT_BYTES)
-    model: str | None = Field(default=None, max_length=200)
+    model: str | None = Field(
+        default=None, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    )
     reasoning_effort: str | None = Field(default=None, pattern=r"^(default|low|medium|high)$")
     timeout: int | None = Field(default=None, ge=30, le=3600)
     execution_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
@@ -293,6 +295,12 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
         codex_command=command,
         codex_home=home,
         codex_model_allowlist=os.environ.get("CODEX_MODEL_ALLOWLIST", ""),
+        codex_model_catalog_json=os.environ.get("CODEX_MODEL_CATALOG_JSON", ""),
+        codex_model_catalog_file=(
+            Path(os.environ["CODEX_MODEL_CATALOG_FILE"])
+            if os.environ.get("CODEX_MODEL_CATALOG_FILE")
+            else None
+        ),
         allowed_github_accounts="",
     )
     workspace_root = Path(os.environ.get("CODEX_WORKSPACE_ROOT", str(DEFAULT_WORKSPACE_ROOT)))

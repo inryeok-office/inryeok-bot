@@ -306,6 +306,8 @@ class JobRepository:
             model_source=job.model_source,
             reasoning_source=job.reasoning_source,
             model_catalog_version=job.model_catalog_version,
+            model_catalog_entry_id=job.model_catalog_entry_id,
+            model_verification_id=job.model_verification_id,
             schema_hash=job.schema_hash,
             codex_cli_version=job.codex_cli_version,
             executor_runtime_version=job.executor_runtime_version,
