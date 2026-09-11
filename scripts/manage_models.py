@@ -22,7 +22,11 @@ from app.config import get_settings
 from app.db.session import get_session_factory
 from app.jobs.models import AdminAuditLog, CodexModelCatalog
 from app.review.model_catalog import db_catalog_version, load_db_catalog
-from app.review.model_catalog_store import add_candidate, finish_verification
+from app.review.model_catalog_store import (
+    add_candidate,
+    annotate_verification_cli_version,
+    finish_verification,
+)
 
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -119,6 +123,34 @@ async def _record(args: argparse.Namespace) -> None:
         )
 
 
+async def _annotate_cli_version(args: argparse.Namespace) -> None:
+    if not args.apply or not args.actor or not args.reason:
+        raise SystemExit("annotate-cli-version requires --apply, --actor and --reason")
+    if not args.verification_id or not SAFE_ID_RE.fullmatch(args.verification_id):
+        raise SystemExit("verification id must be filename-safe ASCII")
+    if not args.cli_version:
+        raise SystemExit("annotate-cli-version requires --cli-version")
+    async with get_session_factory()() as session:
+        row = await annotate_verification_cli_version(
+            session,
+            verification_id=args.verification_id,
+            cli_version=args.cli_version,
+            actor=args.actor,
+            reason=args.reason,
+        )
+        print(
+            json.dumps(
+                {
+                    "event": "verification_cli_version_annotated",
+                    "verification_id": row.verification_id,
+                    "model": row.model_id,
+                    "cli_version": row.cli_version,
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
 async def _set_default(args: argparse.Namespace) -> None:
     if not args.apply or not args.actor or not args.reason:
         raise SystemExit("set-default requires --apply, --actor and --reason")
@@ -187,6 +219,7 @@ def main() -> None:
             "validate",
             "add-candidate",
             "record-verification",
+            "annotate-cli-version",
             "set-default",
             "disable",
             "retire",
@@ -200,6 +233,7 @@ def main() -> None:
     parser.add_argument("--effort", default="medium")
     parser.add_argument("--status", default="SUCCEEDED")
     parser.add_argument("--verification-id")
+    parser.add_argument("--cli-version")
     parser.add_argument("--elapsed-seconds", type=float)
     parser.add_argument("--exit-code", type=int)
     parser.add_argument("--error-code")
@@ -219,6 +253,8 @@ def main() -> None:
         asyncio.run(_add(args))
     elif args.command == "record-verification":
         asyncio.run(_record(args))
+    elif args.command == "annotate-cli-version":
+        asyncio.run(_annotate_cli_version(args))
     elif args.command == "set-default":
         asyncio.run(_set_default(args))
     else:

@@ -4,6 +4,7 @@ The store deliberately exposes no raw executor output.  Verification evidence
 is bounded to identifiers, versions, timings, and safe error categories.
 """
 
+import re
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -22,6 +23,9 @@ from app.review.model_catalog import (
 
 class CatalogConflict(ValueError):
     """Raised when an operator writes against a stale catalog snapshot."""
+
+
+CLI_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:-]{0,63}$")
 
 
 def _require_actor_reason(actor: str, reason: str) -> tuple[str, str]:
@@ -252,6 +256,52 @@ async def finish_verification(
         reason=reason,
         old_value=verification.reasoning_effort,
         new_value=status,
+        verification_id=verification.verification_id,
+    )
+    await session.commit()
+    await session.refresh(verification)
+    return verification
+
+
+async def annotate_verification_cli_version(
+    session: AsyncSession,
+    *,
+    verification_id: str,
+    cli_version: str,
+    actor: str,
+    reason: str,
+) -> CodexModelVerification:
+    """Record independently observed CLI metadata without rerunning Codex."""
+
+    actor, reason = _require_actor_reason(actor, reason)
+    cli_version = cli_version.strip()
+    if not CLI_VERSION_RE.fullmatch(cli_version):
+        raise ValueError("CLI version is invalid")
+    verification = await session.scalar(
+        select(CodexModelVerification)
+        .where(CodexModelVerification.verification_id == verification_id)
+        .with_for_update()
+    )
+    if verification is None:
+        raise ValueError("verification does not exist")
+    old_version = verification.cli_version or "unknown"
+    verification.cli_version = cli_version
+    model = await session.scalar(
+        select(CodexModelCatalog)
+        .where(CodexModelCatalog.model_id == verification.model_id)
+        .with_for_update()
+    )
+    if model is not None and model.verification_id == verification.verification_id:
+        model.verified_cli_version = cli_version
+        model.version += 1
+    await _audit(
+        session,
+        action="MODEL_VERIFICATION_METADATA_UPDATED",
+        target_id=verification.model_id,
+        actor=actor,
+        reason=reason,
+        old_value=old_version,
+        new_value=cli_version,
         verification_id=verification.verification_id,
     )
     await session.commit()

@@ -72,13 +72,23 @@ def _safe_error(error_code: str) -> tuple[str, str]:
     return mapping.get(error_code, ("VERIFICATION_ENVIRONMENT_FAILURE", "executor"))
 
 
-async def _verify(socket: str, model: str, effort: str, execution_id: str, actor: str) -> int:
+async def _verify(
+    socket: str,
+    model: str,
+    effort: str,
+    execution_id: str,
+    actor: str,
+    cli_version: str,
+) -> int:
     settings = get_settings()
     if model not in MODEL_CANDIDATES:
         print(json.dumps({"success": False, "error_code": "MODEL_NOT_ALLOWED"}))
         return 2
     schema_hash = _schema_hash()
-    cli_version = settings.codex_cli_version or "unknown"
+    cli_version = cli_version.strip()
+    if not cli_version:
+        print(json.dumps({"success": False, "error_code": "VERIFICATION_ENVIRONMENT_FAILURE"}))
+        return 2
     fingerprint = _fingerprint(model, effort, cli_version, schema_hash)
     async with get_session_factory()() as session:
         catalog = await load_db_catalog(session)
@@ -193,6 +203,11 @@ def main() -> None:
     parser.add_argument("--effort", required=True, choices=("low", "medium", "high"))
     parser.add_argument("--execution-id", required=True)
     parser.add_argument("--actor", default="operator")
+    parser.add_argument(
+        "--cli-version",
+        required=True,
+        help="the CLI version independently observed on the production executor host",
+    )
     args = parser.parse_args()
     if (
         not args.execution_id.isascii()
@@ -200,7 +215,16 @@ def main() -> None:
     ):
         parser.error("execution id must be filename-safe ASCII")
     raise SystemExit(
-        asyncio.run(_verify(args.socket, args.model, args.effort, args.execution_id, args.actor))
+        asyncio.run(
+            _verify(
+                args.socket,
+                args.model,
+                args.effort,
+                args.execution_id,
+                args.actor,
+                args.cli_version,
+            )
+        )
     )
 
 
