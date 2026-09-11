@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatch
 
@@ -10,7 +11,7 @@ from app.jobs.models import (
     ReviewLanguage,
     ReviewProfile,
 )
-from app.review.model_catalog import validate_model_effort
+from app.review.model_catalog import ModelSpec, validate_model_effort
 
 MAX_FINDINGS = 50
 MIN_CONFIDENCE = 0.8
@@ -69,13 +70,14 @@ def validate_choice(
     model: str | None,
     settings: Settings,
     reasoning_effort: str = ReasoningEffort.MEDIUM.value,
+    catalog: Sequence[ModelSpec] | None = None,
 ) -> None:
     if language not in {item.value for item in ReviewLanguage}:
         raise ValueError("unsupported language")
     if profile not in {item.value for item in ReviewProfile}:
         raise ValueError("unsupported review profile")
     try:
-        validate_model_effort(settings, model, reasoning_effort)
+        validate_model_effort(settings, model, reasoning_effort, catalog)
     except ValueError:
         raise
 
@@ -96,6 +98,7 @@ def resolve(
     settings: Settings,
     *,
     profile_defaults_inherited: bool | None = None,
+    catalog: Sequence[ModelSpec] | None = None,
 ) -> EffectiveReviewSettings:
     """Resolve one immutable review policy.
 
@@ -123,7 +126,7 @@ def resolve(
         repository.override_reasoning_effort,
         global_settings.reasoning_effort or ReasoningEffort.MEDIUM.value,
     )
-    validate_choice(language, profile, model, settings, reasoning_effort)
+    validate_choice(language, profile, model, settings, reasoning_effort, catalog)
     profile_defaults = PROFILE_DEFAULTS[profile]
     # Before profile-aware defaults existed, the persisted global row used
     # 0.9/MEDIUM/10/false.  Treat that exact tuple as legacy defaults so a

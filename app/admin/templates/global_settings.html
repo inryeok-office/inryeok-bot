@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-head">
   <div><p class="eyebrow">설정</p><h1>전역 리뷰 설정</h1><p>저장소에 별도 설정이 없을 때 적용되는 기본값입니다.</p></div>
-  <div class="actions"><a class="button secondary" href="/admin/repositories">저장소 설정</a></div>
+  <div class="actions"><a class="button secondary" href="/admin/models">모델 Catalog</a><a class="button secondary" href="/admin/repositories">저장소 설정</a></div>
 </div>
 {% if global_settings.processing_paused %}<div class="notice warning" role="status"><strong>처리가 일시중지되어 있습니다.</strong><span>설정은 저장되지만 queue 처리는 재개되지 않습니다.</span></div>{% endif %}
 <section class="card model-empty" aria-labelledby="catalog-title">

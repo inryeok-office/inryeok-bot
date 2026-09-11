@@ -1,8 +1,8 @@
-"""Safely inspect and update the operator-managed model catalog.
+"""Manage the PostgreSQL-backed Codex model catalog.
 
-Writes require ``--apply``, an actor and a reason, and only touch the
-explicit catalog file.  Verification evidence is recorded only through
-``record-verification`` after the separate executor harness succeeds.
+The command is intentionally conservative: reads are the default, writes need
+``--apply --actor --reason`` and every mutation uses the catalog command
+service.  No model discovery or private API is performed here.
 """
 
 from __future__ import annotations
@@ -10,117 +10,171 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import re
 import sys
-import tempfile
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sqlalchemy import select
+
 from app.config import get_settings
 from app.db.session import get_session_factory
-from app.jobs.models import AdminAuditLog
-from app.review.model_catalog import VALID_EFFORTS, load_catalog
+from app.jobs.models import AdminAuditLog, CodexModelCatalog
+from app.review.model_catalog import db_catalog_version, load_db_catalog
+from app.review.model_catalog_store import add_candidate, finish_verification
 
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
-def _catalog_path(argument: str | None) -> Path:
-    path = argument or get_settings().codex_model_catalog_file
-    if path is None:
-        raise ValueError("catalog file is not configured; pass --catalog-file")
-    return path
+def _safe(row: CodexModelCatalog) -> dict[str, object]:
+    return {
+        "model_id": row.model_id,
+        "display_name": row.display_name,
+        "purpose_ko": row.purpose_ko,
+        "description_ko": row.description_ko,
+        "enabled": row.enabled,
+        "recommended": row.recommended,
+        "availability_status": row.availability_status,
+        "source": row.source,
+        "supported_efforts": list(row.supported_efforts or []),
+        "default_effort": row.default_effort,
+        "verified_cli_version": row.verified_cli_version,
+        "schema_hash": row.schema_hash,
+        "verified_at": row.verified_at.isoformat() if row.verified_at else None,
+        "verified_by": row.verified_by,
+        "failure_code": row.failure_code,
+        "failure_message": row.failure_message,
+        "verification_id": row.verification_id,
+        "version": row.version,
+    }
 
 
-def _read(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
-        raise ValueError("catalog file must contain a JSON array of objects")
-    return [dict(item) for item in value]
-
-
-def _load_specs(path_argument: str | None):
-    settings = get_settings()
-    if path_argument:
-        settings.codex_model_catalog_json = Path(path_argument).read_text(encoding="utf-8").strip()
-    return settings, load_catalog(settings)
-
-
-def _write(path: Path, values: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".partial", dir=path.parent)
-    temporary = Path(name)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(values, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-async def _record_audit(
-    *, action: str, model_id: str, actor: str, reason: str, verification_id: str | None = None
-) -> None:
-    summary = f"model={model_id}; reason={' '.join(reason.split())[:240]}"
-    if verification_id:
-        summary += f"; verification_id={verification_id}"
+async def _read() -> None:
     async with get_session_factory()() as session:
+        rows = (
+            await session.scalars(select(CodexModelCatalog).order_by(CodexModelCatalog.model_id))
+        ).all()
+        print(
+            json.dumps(
+                {
+                    "catalog_version": await db_catalog_version(session),
+                    "models": [_safe(row) for row in rows],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
+async def _add(args: argparse.Namespace) -> None:
+    if not args.apply or not args.actor or not args.reason:
+        raise SystemExit("add-candidate requires --apply, --actor and --reason")
+    async with get_session_factory()() as session:
+        row = await add_candidate(
+            session,
+            model_id=args.model,
+            display_name=args.display_name or args.model,
+            purpose_ko=args.purpose or "",
+            description_ko=args.description or "",
+            recommended=args.recommended,
+            actor=args.actor,
+            reason=args.reason,
+            expected_catalog_version=args.expected_catalog_version,
+        )
+        print(json.dumps({"event": "candidate", "model": _safe(row)}, ensure_ascii=False))
+
+
+async def _record(args: argparse.Namespace) -> None:
+    if not args.apply or not args.actor or not args.reason:
+        raise SystemExit("record-verification requires --apply, --actor and --reason")
+    if not args.verification_id or not SAFE_ID_RE.fullmatch(args.verification_id):
+        raise SystemExit("verification id must be filename-safe ASCII")
+    if args.status not in {"SUCCEEDED", "FAILED", "UNKNOWN"}:
+        raise SystemExit("status must be SUCCEEDED, FAILED, or UNKNOWN")
+    async with get_session_factory()() as session:
+        row = await finish_verification(
+            session,
+            verification_id=args.verification_id,
+            status=args.status,
+            elapsed_seconds=args.elapsed_seconds,
+            process_exit_code=args.exit_code,
+            safe_error_code=args.error_code,
+            safe_error_category=args.error_category,
+            diagnostic_extraction_failed=args.diagnostic_extraction_failed,
+            actor=args.actor,
+            reason=args.reason,
+        )
+        print(
+            json.dumps(
+                {
+                    "event": "verification_recorded",
+                    "verification_id": row.verification_id,
+                    "model": row.model_id,
+                    "effort": row.reasoning_effort,
+                    "status": row.status,
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
+async def _set_default(args: argparse.Namespace) -> None:
+    if not args.apply or not args.actor or not args.reason:
+        raise SystemExit("set-default requires --apply, --actor and --reason")
+    from app.admin.control_plane import update_global_policy
+    from app.jobs.models import GlobalReviewSettings
+
+    async with get_session_factory()() as session:
+        value = await session.get(GlobalReviewSettings, 1)
+        if value is None:
+            value = GlobalReviewSettings(id=1, version=1)
+            session.add(value)
+            await session.flush()
+        catalog = await load_db_catalog(session)
+        await update_global_policy(
+            session,
+            patch={
+                "model": None if args.model == "CLI_DEFAULT" else args.model,
+                "reasoning_effort": args.effort,
+            },
+            settings=get_settings(),
+            actor_login=args.actor,
+            reason=args.reason,
+            expected_version=value.version,
+            catalog=catalog,
+        )
+        print(json.dumps({"event": "default_updated", "model": args.model, "effort": args.effort}))
+
+
+async def _disable(args: argparse.Namespace) -> None:
+    if not args.apply or not args.actor or not args.reason:
+        raise SystemExit("disable/retire requires --apply, --actor and --reason")
+    async with get_session_factory()() as session:
+        row = await session.scalar(
+            select(CodexModelCatalog)
+            .where(CodexModelCatalog.model_id == args.model)
+            .with_for_update()
+        )
+        if row is None:
+            raise SystemExit("model does not exist")
+        old = row.availability_status
+        row.enabled = False
+        row.availability_status = "RETIRED" if args.command == "retire" else "DISABLED"
+        row.failure_code = "OPERATOR_DISABLED"
+        row.failure_message = " ".join(args.reason.split())[:300]
+        row.version += 1
         session.add(
             AdminAuditLog(
-                actor_login=actor[:255],
-                action=action[:100],
+                actor_login=args.actor[:255],
+                action="MODEL_RETIRED" if args.command == "retire" else "MODEL_DISABLED",
                 target_type="model_catalog",
-                target_id=model_id[:128],
-                summary=summary,
+                target_id=row.model_id,
+                summary=f"reason={args.reason[:300]}; old={old}; new={row.availability_status}",
             )
         )
         await session.commit()
-
-
-def _audit(
-    *, action: str, model_id: str, actor: str, reason: str, verification_id: str | None = None
-) -> None:
-    try:
-        asyncio.run(
-            _record_audit(
-                action=action,
-                model_id=model_id,
-                actor=actor,
-                reason=reason,
-                verification_id=verification_id,
-            )
-        )
-    except Exception as exc:
-        raise SystemExit("catalog audit could not be recorded") from exc
-
-
-def _safe_spec(item: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "model_id": item.get("model_id"),
-        "display_name": item.get("display_name"),
-        "supported_efforts": item.get("supported_efforts"),
-        "default_effort": item.get("default_effort"),
-        "enabled": item.get("enabled"),
-        "availability_status": item.get("availability_status"),
-        "verified_cli_version": item.get("verified_cli_version"),
-        "version": item.get("version"),
-        "source": item.get("source"),
-        "schema_hash": item.get("schema_hash"),
-        "verified_at": item.get("verified_at"),
-        "verified_by": item.get("verified_by"),
-        "failure_code": item.get("failure_code"),
-        "verification_id": item.get("verification_id"),
-    }
+        print(json.dumps({"event": args.command, "model": row.model_id}))
 
 
 def main() -> None:
@@ -133,132 +187,42 @@ def main() -> None:
             "validate",
             "add-candidate",
             "record-verification",
+            "set-default",
             "disable",
             "retire",
         ),
     )
-    parser.add_argument("--catalog-file")
     parser.add_argument("--model")
-    parser.add_argument("--efforts", default="medium")
-    parser.add_argument("--default-effort", default="medium")
-    parser.add_argument("--cli-version")
-    parser.add_argument("--schema-hash")
+    parser.add_argument("--display-name")
+    parser.add_argument("--purpose")
+    parser.add_argument("--description")
+    parser.add_argument("--recommended", action="store_true")
+    parser.add_argument("--effort", default="medium")
+    parser.add_argument("--status", default="SUCCEEDED")
     parser.add_argument("--verification-id")
+    parser.add_argument("--elapsed-seconds", type=float)
+    parser.add_argument("--exit-code", type=int)
+    parser.add_argument("--error-code")
+    parser.add_argument("--error-category")
+    parser.add_argument("--diagnostic-extraction-failed", action="store_true")
+    parser.add_argument("--expected-catalog-version")
     parser.add_argument("--actor")
     parser.add_argument("--reason")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
+    if args.command in {"add-candidate", "set-default", "disable", "retire"} and args.model:
+        if args.model != "CLI_DEFAULT" and not MODEL_ID_RE.fullmatch(args.model):
+            raise SystemExit("model must be a safe, non-empty model ID")
     if args.command in {"list", "inspect", "validate"}:
-        settings, specs = _load_specs(args.catalog_file)
-        print(
-            json.dumps(
-                {
-                    "valid": True,
-                    "catalog_file_configured": (
-                        settings.codex_model_catalog_file is not None
-                        or args.catalog_file is not None
-                    ),
-                    "count": len(specs),
-                    "models": [_safe_spec(item) for item in specs],
-                },
-                ensure_ascii=False,
-            )
-        )
-        return
-
-    path = _catalog_path(args.catalog_file)
-    values = _read(path)
-    if not args.apply:
-        raise SystemExit("write commands require --apply")
-    if not args.actor or not args.reason:
-        raise SystemExit("write commands require --actor and --reason")
-    if not args.model or not MODEL_ID_RE.fullmatch(args.model):
-        raise SystemExit("model must be a safe, non-empty model ID")
-    if args.model == "CLI_DEFAULT":
-        raise SystemExit("CLI_DEFAULT is represented by a null setting, not a catalog row")
-    existing = next((item for item in values if item.get("model_id") == args.model), None)
-
-    if args.command == "add-candidate":
-        efforts = tuple(dict.fromkeys(item.strip().lower() for item in args.efforts.split(",")))
-        if not efforts or not set(efforts) <= VALID_EFFORTS:
-            raise SystemExit("efforts must be default, low, medium, or high")
-        if existing is None:
-            values.append(
-                {
-                    "model_id": args.model,
-                    "display_name": args.model,
-                    "description_ko": "운영자 검증 대기 모델",
-                    "supported_efforts": list(efforts),
-                    "default_effort": args.default_effort,
-                    "enabled": False,
-                    "recommended": False,
-                    "availability_status": "UNVERIFIED",
-                    "source": "OPERATOR",
-                    "version": "1",
-                }
-            )
-        _write(path, values)
-        _audit(
-            action="MODEL_CANDIDATE_ADDED",
-            model_id=args.model,
-            actor=args.actor,
-            reason=args.reason,
-        )
-        print(json.dumps({"event": "candidate_added", "model_id": args.model, "actor": args.actor}))
-        return
-
-    if existing is None:
-        raise SystemExit("model candidate does not exist")
-    if args.command == "record-verification":
-        if (
-            not args.cli_version
-            or not args.schema_hash
-            or not args.verification_id
-            or not SAFE_ID_RE.fullmatch(args.verification_id)
-        ):
-            raise SystemExit(
-                "record-verification requires cli version, schema hash, and verification id"
-            )
-        existing.update(
-            {
-                "enabled": True,
-                "availability_status": "VERIFIED",
-                "verified_cli_version": args.cli_version,
-                "schema_hash": args.schema_hash,
-                "verified_at": datetime.now(UTC).isoformat(),
-                "verified_by": args.actor,
-                "verification_id": args.verification_id,
-                "failure_code": None,
-                "failure_message": None,
-            }
-        )
-        _write(path, values)
-        _audit(
-            action="MODEL_VERIFICATION_RECORDED",
-            model_id=args.model,
-            actor=args.actor,
-            reason=args.reason,
-            verification_id=args.verification_id,
-        )
-        print(
-            json.dumps(
-                {"event": "verification_recorded", "model_id": args.model, "actor": args.actor}
-            )
-        )
-        return
-
-    existing["enabled"] = False
-    existing["availability_status"] = "RETIRED" if args.command == "retire" else "UNAVAILABLE"
-    existing["failure_code"] = "OPERATOR_DISABLED"
-    existing["failure_message"] = args.reason[:300]
-    _write(path, values)
-    _audit(
-        action="MODEL_RETIRED" if args.command == "retire" else "MODEL_DISABLED",
-        model_id=args.model,
-        actor=args.actor,
-        reason=args.reason,
-    )
-    print(json.dumps({"event": args.command, "model_id": args.model, "actor": args.actor}))
+        asyncio.run(_read())
+    elif args.command == "add-candidate":
+        asyncio.run(_add(args))
+    elif args.command == "record-verification":
+        asyncio.run(_record(args))
+    elif args.command == "set-default":
+        asyncio.run(_set_default(args))
+    else:
+        asyncio.run(_disable(args))
 
 
 if __name__ == "__main__":

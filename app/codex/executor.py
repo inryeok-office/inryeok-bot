@@ -45,6 +45,11 @@ class ReviewRequest(BaseModel):
         default=None, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
     )
     reasoning_effort: str | None = Field(default=None, pattern=r"^(default|low|medium|high)$")
+    model_catalog_version: str | None = Field(default=None, max_length=64)
+    model_verification_id: str | None = Field(
+        default=None, max_length=128, pattern=r"^[A-Za-z0-9_-]{8,128}$"
+    )
+    verification_mode: bool = False
     timeout: int | None = Field(default=None, ge=30, le=3600)
     execution_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
 
@@ -103,6 +108,9 @@ def _request_fingerprint(request: ReviewRequest) -> str:
         request.prompt,
         request.model or "",
         request.reasoning_effort or "",
+        request.model_catalog_version or "",
+        request.model_verification_id or "",
+        "verification" if request.verification_mode else "review",
         str(request.timeout or ""),
     ):
         digest.update(value.encode("utf-8"))
@@ -176,6 +184,26 @@ async def health() -> dict[str, str]:
 
 @app.post("/review", response_model=None)
 async def review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
+    if request.model and request.model_verification_id is None and not request.verification_mode:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error_code": "CODEX_MODEL_SNAPSHOT_MISSING",
+                "retryable": False,
+                "stage": "request_validation",
+                "error": "verified model snapshot is required",
+            },
+        )
+    if request.verification_mode and (not request.model or request.model_verification_id is None):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error_code": "MODEL_VERIFICATION_REQUEST_INVALID",
+                "retryable": False,
+                "stage": "request_validation",
+                "error": "verification request is incomplete",
+            },
+        )
     request_hash = _request_fingerprint(request)
     prior = _read_execution_record(request.execution_id)
     if prior is None and _execution_record_exists(request.execution_id):
@@ -294,13 +322,11 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
         public_base_url="",
         codex_command=command,
         codex_home=home,
-        codex_model_allowlist=os.environ.get("CODEX_MODEL_ALLOWLIST", ""),
-        codex_model_catalog_json=os.environ.get("CODEX_MODEL_CATALOG_JSON", ""),
-        codex_model_catalog_file=(
-            Path(os.environ["CODEX_MODEL_CATALOG_FILE"])
-            if os.environ.get("CODEX_MODEL_CATALOG_FILE")
-            else None
-        ),
+        # The executor receives the worker's immutable, verified snapshot.
+        # It never reads a catalog file or environment JSON.
+        codex_model_allowlist="",
+        codex_model_catalog_json="",
+        codex_model_catalog_file=None,
         allowed_github_accounts="",
     )
     workspace_root = Path(os.environ.get("CODEX_WORKSPACE_ROOT", str(DEFAULT_WORKSPACE_ROOT)))
@@ -320,6 +346,8 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
                 request.timeout,
                 request.execution_id,
                 request.reasoning_effort,
+                request.model_catalog_version,
+                request.model_verification_id,
             )
         except CodexError as exc:
             diagnostics = exc.safe_diagnostic

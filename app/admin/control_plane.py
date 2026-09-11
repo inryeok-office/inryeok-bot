@@ -21,7 +21,7 @@ from app.jobs.models import (
     ReviewJob,
     ReviewRun,
 )
-from app.review.model_catalog import normalize_model
+from app.review.model_catalog import ModelSpec, load_db_catalog, normalize_model
 from app.review.settings import (
     EffectiveReviewSettings,
     resolve,
@@ -147,6 +147,7 @@ def resolve_repository_policy(
     global_settings: GlobalReviewSettings,
     repository: RepositorySettings,
     settings: Settings,
+    catalog: tuple[ModelSpec, ...] | None = None,
 ) -> EffectiveRepositoryPolicy:
     """Resolve the policy used by admin read models and execution gates.
 
@@ -157,7 +158,7 @@ def resolve_repository_policy(
     false value as an administrator decision when its override is NULL.
     """
 
-    effective = resolve(global_settings, repository, settings)
+    effective = resolve(global_settings, repository, settings, catalog=catalog)
     # resolve() historically includes the materialized flags as a lower bound.
     # Correct that legacy artefact at the canonical boundary so stale rows with
     # NULL overrides inherit the global policy.  Explicit overrides still win.
@@ -240,7 +241,7 @@ _REPOSITORY_PATCH_FIELDS = frozenset(
 
 
 def validate_repository_policy_patch(
-    patch: Mapping[str, Any], settings: Settings
+    patch: Mapping[str, Any], settings: Settings, catalog: tuple[ModelSpec, ...] | None = None
 ) -> dict[str, Any]:
     """Validate and normalize a repository policy PATCH.
 
@@ -274,14 +275,14 @@ def validate_repository_policy_patch(
         and normalized["override_review_profile"] is not None
     ):
         profile = str(normalized["override_review_profile"])
-        validate_choice("ko", profile, None, settings)
+        validate_choice("ko", profile, None, settings, catalog=catalog)
         normalized["override_review_profile"] = profile
     if "override_model" in normalized and normalized["override_model"]:
         normalized["override_model"] = normalize_model(str(normalized["override_model"]))
-        validate_choice("ko", "BALANCED", normalized["override_model"], settings)
+        validate_choice("ko", "BALANCED", normalized["override_model"], settings, catalog=catalog)
     if "override_reasoning_effort" in normalized and normalized["override_reasoning_effort"]:
         validate_choice(
-            "ko", "BALANCED", None, settings, str(normalized["override_reasoning_effort"])
+            "ko", "BALANCED", None, settings, str(normalized["override_reasoning_effort"]), catalog
         )
     if "override_max_findings" in normalized and normalized["override_max_findings"] is not None:
         value = int(normalized["override_max_findings"])
@@ -320,17 +321,22 @@ def validate_repository_policy_patch(
 
 
 def apply_repository_policy_patch(
-    repository: RepositorySettings, patch: Mapping[str, Any], settings: Settings
+    repository: RepositorySettings,
+    patch: Mapping[str, Any],
+    settings: Settings,
+    catalog: tuple[ModelSpec, ...] | None = None,
 ) -> tuple[str, ...]:
     """Apply only explicitly supplied fields and return changed field names."""
 
-    normalized = validate_repository_policy_patch(patch, settings)
+    normalized = validate_repository_policy_patch(patch, settings, catalog)
     candidate_model = normalized.get("override_model", repository.override_model)
     candidate_effort = normalized.get(
         "override_reasoning_effort", repository.override_reasoning_effort
     )
     if candidate_model is not None:
-        validate_choice("ko", "BALANCED", candidate_model, settings, candidate_effort or "medium")
+        validate_choice(
+            "ko", "BALANCED", candidate_model, settings, candidate_effort or "medium", catalog
+        )
     changed: list[str] = []
     # Keep legacy materialized columns synchronized from the canonical
     # override command.  They remain compatibility projections only; routes
@@ -384,7 +390,9 @@ _GLOBAL_PATCH_FIELDS = frozenset(
 )
 
 
-def validate_global_policy_patch(patch: Mapping[str, Any], settings: Settings) -> dict[str, Any]:
+def validate_global_policy_patch(
+    patch: Mapping[str, Any], settings: Settings, catalog: tuple[ModelSpec, ...] | None = None
+) -> dict[str, Any]:
     """Validate a global review-default PATCH without applying omitted fields."""
 
     unknown = set(patch) - _GLOBAL_PATCH_FIELDS
@@ -406,7 +414,7 @@ def validate_global_policy_patch(patch: Mapping[str, Any], settings: Settings) -
     if "language" in normalized and normalized["language"] not in {"ko", "en"}:
         raise ValueError("unsupported language")
     if "review_profile" in normalized:
-        validate_choice("ko", str(normalized["review_profile"]), None, settings)
+        validate_choice("ko", str(normalized["review_profile"]), None, settings, catalog=catalog)
     candidate_model = normalize_model(normalized.get("model"))
     if "model" in normalized:
         normalized["model"] = candidate_model
@@ -417,6 +425,7 @@ def validate_global_policy_patch(patch: Mapping[str, Any], settings: Settings) -
             str(candidate_model) if candidate_model else None,
             settings,
             str(normalized.get("reasoning_effort", "medium")),
+            catalog,
         )
     if "max_findings" in normalized:
         value = int(normalized["max_findings"])
@@ -462,13 +471,16 @@ def apply_global_policy_patch(
     global_settings: GlobalReviewSettings,
     patch: Mapping[str, Any],
     settings: Settings,
+    catalog: tuple[ModelSpec, ...] | None = None,
 ) -> tuple[str, ...]:
     """Apply a validated global PATCH and preserve profile provenance."""
 
-    normalized = validate_global_policy_patch(patch, settings)
+    normalized = validate_global_policy_patch(patch, settings, catalog)
     candidate_model = normalized.get("model", global_settings.model)
     candidate_effort = normalized.get("reasoning_effort", global_settings.reasoning_effort)
-    validate_choice("ko", "BALANCED", candidate_model, settings, candidate_effort or "medium")
+    validate_choice(
+        "ko", "BALANCED", candidate_model, settings, candidate_effort or "medium", catalog
+    )
     changed: list[str] = []
     for field_name, value in normalized.items():
         if getattr(global_settings, field_name) != value:
@@ -549,6 +561,7 @@ async def update_global_policy(
     actor_login: str,
     reason: str,
     expected_version: int | None,
+    catalog: tuple[ModelSpec, ...] | None = None,
 ) -> GlobalReviewSettings:
     """Apply a validated global policy patch through one audited writer."""
     if expected_version is None:
@@ -563,7 +576,7 @@ async def update_global_policy(
     current_version = int(value.version or 1)
     if expected_version != current_version:
         raise ValueError("STALE_GLOBAL_SETTINGS_VERSION")
-    changed = apply_global_policy_patch(value, patch, settings)
+    changed = apply_global_policy_patch(value, patch, settings, catalog)
     if not changed:
         await session.commit()
         await session.refresh(value)
@@ -593,6 +606,7 @@ async def update_repository_policy(
     actor_login: str,
     reason: str,
     expected_version: int | None,
+    catalog: tuple[ModelSpec, ...] | None = None,
 ) -> RepositorySettings:
     """Apply a repository policy patch through one audited writer."""
     if expected_version is None:
@@ -605,7 +619,7 @@ async def update_repository_policy(
     current_version = int(locked.version or 1)
     if expected_version != current_version:
         raise ValueError("STALE_REPOSITORY_SETTINGS_VERSION")
-    changed = apply_repository_policy_patch(locked, patch, settings)
+    changed = apply_repository_policy_patch(locked, patch, settings, catalog)
     if changed:
         locked.version = current_version + 1
         session.add(
@@ -660,9 +674,10 @@ async def repository_summaries(
     global_settings = await session.get(GlobalReviewSettings, 1)
     if global_settings is None:
         global_settings = GlobalReviewSettings(id=1)
+    catalog = await load_db_catalog(session)
     summaries: list[RepositorySummary] = []
     for repository in repositories:
-        policy = resolve_repository_policy(global_settings, repository, settings)
+        policy = resolve_repository_policy(global_settings, repository, settings, catalog)
         recent_job = await session.scalar(
             select(ReviewJob)
             .where(

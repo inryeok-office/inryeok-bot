@@ -224,6 +224,21 @@ async def test_executor_settings_do_not_read_dotenv(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_executor_rejects_explicit_model_without_verified_snapshot() -> None:
+    request = ReviewRequest(
+        archive=base64.b64encode(_archive()).decode(),
+        prompt="review",
+        model="gpt-5.6-sol",
+        reasoning_effort="medium",
+        execution_id="missing-snapshot-123",
+    )
+    result = await review(request)
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 422
+    assert b"CODEX_MODEL_SNAPSHOT_MISSING" in result.body
+
+
+@pytest.mark.asyncio
 async def test_executor_response_serializes_schema_diagnostic_fallback(monkeypatch) -> None:
     class SettingsStub:
         def __init__(self, **kwargs: object) -> None:

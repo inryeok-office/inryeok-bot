@@ -323,6 +323,8 @@ class ReviewRunner(Protocol):
         timeout: int | None = None,
         execution_id: str | None = None,
         reasoning_effort: str | None = None,
+        model_catalog_version: str | None = None,
+        model_verification_id: str | None = None,
     ) -> ReviewOutput: ...
 
 
@@ -338,6 +340,8 @@ class FakeRunner:
         timeout: int | None = None,
         execution_id: str | None = None,
         reasoning_effort: str | None = None,
+        model_catalog_version: str | None = None,
+        model_verification_id: str | None = None,
     ) -> ReviewOutput:
         return self.output
 
@@ -425,6 +429,8 @@ class CodexRunner:
         timeout: int | None = None,
         execution_id: str | None = None,
         reasoning_effort: str | None = None,
+        model_catalog_version: str | None = None,
+        model_verification_id: str | None = None,
     ) -> ReviewOutput:
         self._validate_schema_definition()
         command = [
@@ -445,10 +451,15 @@ class CodexRunner:
             "-",
         ]
         if model:
-            try:
-                validate_model_effort(self.settings, model, reasoning_effort or "default")
-            except ValueError as exc:
-                raise CodexError("CODEX_MODEL_NOT_ALLOWED", str(exc)) from exc
+            if model_verification_id is None:
+                try:
+                    validate_model_effort(self.settings, model, reasoning_effort or "default")
+                except ValueError as exc:
+                    raise CodexError("CODEX_MODEL_NOT_ALLOWED", str(exc)) from exc
+            elif not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", model_verification_id):
+                raise CodexError(
+                    "CODEX_MODEL_NOT_ALLOWED", "model verification snapshot is invalid"
+                )
             command[2:2] = ["--model", model]
         if reasoning_effort:
             if reasoning_effort == "default":

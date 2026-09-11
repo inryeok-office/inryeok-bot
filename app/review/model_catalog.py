@@ -1,28 +1,27 @@
-"""Explicit, operator-managed Codex model catalog."""
+"""Codex model catalog contracts and the PostgreSQL-backed read model.
+
+Production callers use :func:`load_db_catalog`.  The JSON loader remains only
+for isolated tests and explicit import tooling; it is never authoritative in
+the web, worker, or executor runtime.
+"""
 
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, fields
+from datetime import datetime
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import Settings
+from app.jobs.models import CodexModelCatalog
 
 CLI_DEFAULT = "CLI_DEFAULT"
 VALID_EFFORTS = frozenset({"default", "low", "medium", "high"})
-VALID_STATUS = frozenset(
-    {
-        "CANDIDATE",
-        "VERIFYING",
-        "VERIFIED",
-        "FAILED",
-        "DISABLED",
-        "RETIRED",
-        "UNVERIFIED",
-        "UNAVAILABLE",
-        "DEPRECATED",
-    }
-)
+VALID_STATUS = frozenset({"CANDIDATE", "VERIFYING", "VERIFIED", "FAILED", "DISABLED", "RETIRED"})
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
 
 
@@ -45,10 +44,13 @@ class ModelSpec:
     failure_code: str | None
     failure_message: str | None
     verification_id: str | None
+    purpose_ko: str = ""
 
     @property
     def selectable(self) -> bool:
-        return self.enabled and self.availability_status == "VERIFIED"
+        return (
+            self.enabled and self.availability_status == "VERIFIED" and bool(self.supported_efforts)
+        )
 
 
 def _spec(value: Any) -> ModelSpec | None:
@@ -66,7 +68,6 @@ def _spec(value: Any) -> ModelSpec | None:
     if (
         not MODEL_ID_RE.fullmatch(model_id)
         or model_id == CLI_DEFAULT
-        or not efforts
         or not set(efforts) <= VALID_EFFORTS
         or status not in VALID_STATUS
         or source != "OPERATOR"
@@ -97,28 +98,23 @@ def _spec(value: Any) -> ModelSpec | None:
         verification_id=(
             str(value["verification_id"])[:128] if value.get("verification_id") else None
         ),
+        purpose_ko=str(value.get("purpose_ko") or "")[:64],
     )
 
 
 def _raw_catalog(settings: Settings) -> str:
-    raw = settings.codex_model_catalog_json.strip()
-    if not raw and settings.codex_model_catalog_file is not None:
-        try:
-            raw = settings.codex_model_catalog_file.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            # A configured path may be provisioned before the first candidate
-            # is approved.  Keep the safe CLI-default fallback operational.
-            return ""
-        except OSError as exc:
-            raise ValueError("unable to read Codex model catalog file") from exc
-    return raw
+    """Read only an explicit test/import fixture, never a production catalog."""
+
+    if settings.environment == "production":
+        return ""
+    return settings.codex_model_catalog_json.strip()
 
 
 def load_catalog(settings: Settings) -> tuple[ModelSpec, ...]:
+    """Load the legacy JSON fixture for tests and import tooling only."""
+
     raw = _raw_catalog(settings)
     if not raw:
-        # Legacy CODEX_MODEL_ALLOWLIST is candidate input only. It must never
-        # become selectable without explicit verification metadata.
         return ()
     try:
         values = json.loads(raw)
@@ -132,8 +128,33 @@ def load_catalog(settings: Settings) -> tuple[ModelSpec, ...]:
     return tuple(item for item in specs if item is not None)
 
 
-def catalog_version(settings: Settings) -> str:
-    specs = load_catalog(settings)
+def _row_spec(row: CodexModelCatalog) -> ModelSpec:
+    verified_at = row.verified_at.isoformat() if isinstance(row.verified_at, datetime) else None
+    return ModelSpec(
+        model_id=row.model_id,
+        display_name=row.display_name,
+        description_ko=row.description_ko,
+        supported_efforts=tuple(
+            dict.fromkeys(str(value).lower() for value in (row.supported_efforts or []))
+        ),
+        default_effort=row.default_effort,
+        enabled=row.enabled,
+        recommended=row.recommended,
+        availability_status=row.availability_status,
+        verified_cli_version=row.verified_cli_version,
+        version=str(row.version),
+        source=row.source,
+        schema_hash=row.schema_hash,
+        verified_at=verified_at,
+        verified_by=row.verified_by,
+        failure_code=row.failure_code,
+        failure_message=row.failure_message,
+        verification_id=row.verification_id,
+        purpose_ko=row.purpose_ko,
+    )
+
+
+def catalog_version_for(specs: Sequence[ModelSpec]) -> str:
     if not specs:
         return "empty"
     names = {field.name for field in fields(ModelSpec)}
@@ -145,13 +166,37 @@ def catalog_version(settings: Settings) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+async def load_db_catalog(session: AsyncSession) -> tuple[ModelSpec, ...]:
+    rows = (
+        await session.scalars(select(CodexModelCatalog).order_by(CodexModelCatalog.model_id))
+    ).all()
+    return tuple(_row_spec(row) for row in rows)
+
+
+async def load_db_selectable_catalog(session: AsyncSession) -> tuple[ModelSpec, ...]:
+    return tuple(item for item in await load_db_catalog(session) if item.selectable)
+
+
+async def db_catalog_version(session: AsyncSession) -> str:
+    return catalog_version_for(await load_db_catalog(session))
+
+
+def catalog_version(settings: Settings) -> str:
+    """Legacy fixture hash; production snapshots use ``db_catalog_version``."""
+
+    return catalog_version_for(load_catalog(settings))
+
+
 def available_model_ids(settings: Settings) -> tuple[str, ...]:
     return tuple(item.model_id for item in load_catalog(settings) if item.selectable)
 
 
-def spec_for(settings: Settings, model: str | None) -> ModelSpec | None:
+def spec_for(
+    settings: Settings, model: str | None, catalog: Sequence[ModelSpec] | None = None
+) -> ModelSpec | None:
     normalized = model.strip() if isinstance(model, str) else model
-    return next((item for item in load_catalog(settings) if item.model_id == normalized), None)
+    values = load_catalog(settings) if catalog is None else catalog
+    return next((item for item in values if item.model_id == normalized), None)
 
 
 def normalize_model(model: str | None) -> str | None:
@@ -163,7 +208,12 @@ def normalize_model(model: str | None) -> str | None:
     return None if normalized in {"", CLI_DEFAULT} else normalized
 
 
-def validate_model_effort(settings: Settings, model: str | None, effort: str) -> None:
+def validate_model_effort(
+    settings: Settings,
+    model: str | None,
+    effort: str,
+    catalog: Sequence[ModelSpec] | None = None,
+) -> None:
     normalized_effort = effort.strip().lower()
     if normalized_effort not in VALID_EFFORTS:
         raise ValueError("reasoning effort is not allowed")
@@ -173,7 +223,7 @@ def validate_model_effort(settings: Settings, model: str | None, effort: str) ->
     normalized_model = model.strip()
     if not MODEL_ID_RE.fullmatch(normalized_model) or normalized_model == CLI_DEFAULT:
         raise ValueError("model ID is invalid")
-    spec = spec_for(settings, normalized_model)
+    spec = spec_for(settings, normalized_model, catalog)
     if spec is None or not spec.selectable:
         raise ValueError("model is not verified or enabled")
     if normalized_effort not in spec.supported_efforts:

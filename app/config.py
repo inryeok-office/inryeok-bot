@@ -172,6 +172,11 @@ class Settings(BaseSettings):
 
     @property
     def allowed_codex_models(self) -> tuple[str, ...]:
+        if self.environment == "production":
+            # Production model selection is read from PostgreSQL through the
+            # canonical control-plane resolver; env/file values are not an
+            # authoritative catalog.
+            return ()
         from app.review.model_catalog import available_model_ids
 
         return available_model_ids(self)

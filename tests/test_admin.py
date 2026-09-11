@@ -150,6 +150,7 @@ async def test_admin_console_information_architecture_has_five_sections(app_clie
         "/admin/jobs",
         "/admin/usage",
         "/admin/settings",
+        "/admin/models",
         "/admin/audit",
         "/admin/operations",
     )

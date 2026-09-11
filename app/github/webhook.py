@@ -27,7 +27,7 @@ from app.jobs.models import (
     WebhookDelivery,
 )
 from app.jobs.repository import JobRepository, QueueCapacityError
-from app.review.model_catalog import CLI_DEFAULT, catalog_version, spec_for
+from app.review.model_catalog import CLI_DEFAULT, db_catalog_version, load_db_catalog, spec_for
 from app.review.settings import EffectiveReviewSettings
 
 router = APIRouter()
@@ -148,7 +148,8 @@ async def _effective_settings(
         global_settings = GlobalReviewSettings(id=1)
         session.add(global_settings)
         await session.flush()
-    return resolve_repository_policy(global_settings, repository, settings).settings
+    catalog = await load_db_catalog(session)
+    return resolve_repository_policy(global_settings, repository, settings, catalog).settings
 
 
 def _trigger_enabled(action: str, effective: EffectiveReviewSettings) -> bool:
@@ -563,7 +564,9 @@ async def github_webhook(
                 )
                 if recent is not None:
                     return await ignored("command_cooldown")
-        model_spec = spec_for(settings, effective.model)
+        model_catalog = await load_db_catalog(session)
+        model_spec = spec_for(settings, effective.model, model_catalog)
+        db_catalog_version_value = await db_catalog_version(session)
         try:
             job, created = await JobRepository(session).enqueue(
                 max_pending_jobs=settings.max_pending_jobs,
@@ -592,7 +595,7 @@ async def github_webhook(
                     if repo_settings.override_reasoning_effort is not None
                     else "GLOBAL_DEFAULT"
                 ),
-                model_catalog_version=catalog_version(settings),
+                model_catalog_version=db_catalog_version_value,
                 model_catalog_entry_id=model_spec.model_id if model_spec is not None else None,
                 model_verification_id=(
                     (model_spec.verification_id or model_spec.version)

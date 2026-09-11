@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}모델 Catalog{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">설정 · AI 실행</p>
+    <h1>모델 Catalog</h1>
+    <p>운영자가 검증한 모델과 reasoning effort만 리뷰 설정에서 선택할 수 있습니다.</p>
+  </div>
+  <div class="actions"><a class="button secondary" href="/admin/settings">전역 설정</a></div>
+</div>
+<section class="card section" aria-labelledby="catalog-heading">
+  <div class="section-head">
+    <div>
+      <h2 id="catalog-heading">운영 Catalog</h2>
+      <p class="muted">검증은 운영 명령으로만 수행하며 원본 출력은 저장하지 않습니다.</p>
+    </div>
+    <span class="muted">{{ model_catalog|selectattr('selectable')|list|length }}개 선택 가능</span>
+  </div>
+  {% if model_catalog %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <caption class="sr-only">Codex 모델 Catalog</caption>
+      <thead><tr><th scope="col">모델</th><th scope="col">용도</th><th scope="col">상태</th><th scope="col">검증 effort</th><th scope="col">CLI</th><th scope="col">최근 결과</th></tr></thead>
+      <tbody>
+      {% for item in model_catalog %}
+        <tr>
+          <td data-label="모델"><strong>{{ item.display_name }}</strong><span class="repo-meta identifier">{{ item.model_id }}</span><span class="repo-meta">{{ item.description_ko }}</span></td>
+          <td data-label="용도">{{ item.purpose_ko or '운영자 검증 대기' }}</td>
+          <td data-label="상태">{{ item.availability_status }}{% if item.recommended %}<span class="tag">추천</span>{% endif %}</td>
+          <td data-label="검증 effort">{% if item.supported_efforts %}{{ item.supported_efforts|join(', ') }}{% else %}<span class="muted">없음</span>{% endif %}</td>
+          <td data-label="CLI">{{ item.verified_cli_version or '확인 전' }}</td>
+          <td data-label="최근 결과">{% if item.failure_code %}<span class="text-danger">{{ item.failure_code }}</span>{% elif item.selectable %}<span class="text-success">검증 성공</span>{% else %}<span class="muted">검증 대기</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty compact-empty"><strong>등록된 모델 후보가 없습니다.</strong><p>현재는 Codex CLI 기본 모델을 계속 사용합니다.</p></div>
+  {% endif %}
+</section>
+{% endblock %}

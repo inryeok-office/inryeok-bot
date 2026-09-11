@@ -1,25 +1,26 @@
-"""Inspect and validate the operator-managed Codex catalog without model calls."""
+"""Read-only inspection of the PostgreSQL model catalog."""
 
 import argparse
+import asyncio
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.config import get_settings
-from app.review.model_catalog import load_catalog
+from app.db.session import get_session_factory
+from app.review.model_catalog import db_catalog_version, load_db_catalog
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("inspect", "validate"))
-    args = parser.parse_args()
-    try:
-        specs = load_catalog(get_settings())
-        payload = {
+async def _run() -> dict[str, object]:
+    async with get_session_factory()() as session:
+        values = await load_db_catalog(session)
+        return {
             "valid": True,
-            "count": len(specs),
+            "source": "postgresql",
+            "catalog_version": await db_catalog_version(session),
+            "count": len(values),
+            "selectable_count": sum(item.selectable for item in values),
             "models": [
                 {
                     "model_id": item.model_id,
@@ -31,15 +32,19 @@ def main() -> None:
                     "availability_status": item.availability_status,
                     "verified_cli_version": item.verified_cli_version,
                     "version": item.version,
+                    "failure_code": item.failure_code,
                 }
-                for item in specs
+                for item in values
             ],
         }
-    except ValueError as exc:
-        payload = {"valid": False, "error_code": "INVALID_MODEL_CATALOG", "message": str(exc)}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command", choices=("inspect", "validate"))
+    parser.parse_args()
+    payload = asyncio.run(_run())
     print(json.dumps(payload, ensure_ascii=False))
-    if args.command == "validate" and not payload["valid"]:
-        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ from app.jobs.models import (
 )
 from app.jobs.repository import JobRepository
 from app.review.domains import PROMPT_VERSION, effective_domains
-from app.review.model_catalog import load_catalog, spec_for
+from app.review.model_catalog import load_db_catalog, spec_for
 from app.review.settings import validate_choice, validate_paths
 
 router = APIRouter(prefix="/admin")
@@ -311,8 +311,9 @@ async def repositories(
     global_settings = await session.get(GlobalReviewSettings, 1)
     if global_settings is None:
         global_settings = GlobalReviewSettings(id=1)
+    catalog = await load_db_catalog(session)
     effective_by_repository = {
-        repository.id: resolve_repository_policy(global_settings, repository, settings)
+        repository.id: resolve_repository_policy(global_settings, repository, settings, catalog)
         for repository in values
     }
     latest_runs: dict[tuple[str, str], ReviewRun] = {}
@@ -359,6 +360,10 @@ async def repository_detail(
         global_settings = GlobalReviewSettings(id=1)
         session.add(global_settings)
         await session.commit()
+    catalog = await load_db_catalog(session)
+    effective_model_spec = spec_for(
+        settings, repository.override_model or global_settings.model, catalog
+    )
     return templates.TemplateResponse(
         request,
         "repository_detail.html",
@@ -367,11 +372,14 @@ async def repository_detail(
             principal,
             settings,
             repository=repository,
-            effective=resolve_repository_policy(global_settings, repository, settings),
-            models=settings.allowed_codex_models,
-            model_catalog=load_catalog(settings),
-            effective_model_spec=spec_for(
-                settings, repository.override_model or global_settings.model
+            effective=resolve_repository_policy(global_settings, repository, settings, catalog),
+            models=tuple(item.model_id for item in catalog if item.selectable),
+            model_catalog=tuple(item for item in catalog if item.selectable),
+            effective_model_spec=effective_model_spec,
+            reasoning_efforts=(
+                effective_model_spec.supported_efforts
+                if effective_model_spec is not None
+                else ("low", "medium", "high")
             ),
             domains=[item.value for item in ReviewDomain],
             prompt_version=PROMPT_VERSION,
@@ -391,6 +399,8 @@ async def global_settings_page(
         value = GlobalReviewSettings(id=1)
         session.add(value)
         await session.commit()
+    catalog = await load_db_catalog(session)
+    model_spec = spec_for(settings, value.model, catalog)
     return templates.TemplateResponse(
         request,
         "global_settings.html",
@@ -399,9 +409,14 @@ async def global_settings_page(
             principal,
             settings,
             global_settings=value,
-            models=settings.allowed_codex_models,
-            model_catalog=load_catalog(settings),
-            model_spec=spec_for(settings, value.model),
+            models=tuple(item.model_id for item in catalog if item.selectable),
+            model_catalog=tuple(item for item in catalog if item.selectable),
+            model_spec=model_spec,
+            reasoning_efforts=(
+                model_spec.supported_efforts
+                if model_spec is not None
+                else ("low", "medium", "high")
+            ),
             domains=[item.value for item in ReviewDomain],
             prompt_version=PROMPT_VERSION,
         ),
@@ -422,6 +437,28 @@ async def audit_log(
     ).all()
     return templates.TemplateResponse(
         request, "audit.html", _context(request, principal, settings, entries=entries)
+    )
+
+
+@router.get("/models", response_class=HTMLResponse)
+async def model_catalog_page(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    principal: AdminPrincipal = Depends(require_admin),
+) -> HTMLResponse:
+    """Read-only catalog view; verification is deliberately CLI-operated."""
+
+    catalog = await load_db_catalog(session)
+    return templates.TemplateResponse(
+        request,
+        "model_catalog.html",
+        _context(
+            request,
+            principal,
+            settings,
+            model_catalog=catalog,
+        ),
     )
 
 
@@ -573,8 +610,11 @@ async def update_global_settings(
     principal: AdminPrincipal = Depends(require_admin),
 ) -> RedirectResponse:
     verify_csrf(csrf, principal, settings)
+    catalog = await load_db_catalog(session)
     try:
-        validate_choice(language, review_profile, model or None, settings, reasoning_effort)
+        validate_choice(
+            language, review_profile, model or None, settings, reasoning_effort, catalog
+        )
         if minimum_severity.upper() not in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}:
             raise ValueError("unsupported minimum severity")
         validate_paths(ignored_paths)
@@ -633,6 +673,7 @@ async def update_global_settings(
             actor_login=principal.github_login,
             reason="admin settings form",
             expected_version=expected_version,
+            catalog=catalog,
         )
     except ValueError as exc:
         if str(exc) in {"STALE_GLOBAL_SETTINGS_VERSION", "MISSING_GLOBAL_SETTINGS_VERSION"}:
@@ -689,6 +730,7 @@ async def update_repository(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "repository not found")
     _ensure_allowed(repository.repository_owner, settings)
     await _require_repository_admin(repository, principal, settings)
+    catalog = await load_db_catalog(session)
     # A settings form is allowed to update one section at a time.  In
     # particular, unchecked checkboxes are absent from an HTML form; treating
     # an absent field as false silently overwrites unrelated settings.
@@ -717,6 +759,7 @@ async def update_repository(
             override_model or None,
             settings,
             override_reasoning_effort or "medium",
+            catalog,
         )
         if present("override_enabled"):
             policy_patch["override_enabled"] = _optional_bool(override_enabled)
@@ -802,6 +845,7 @@ async def update_repository(
             actor_login=principal.github_login,
             reason="admin repository settings form",
             expected_version=expected_version,
+            catalog=catalog,
         )
     except ValueError as exc:
         if str(exc) in {"STALE_REPOSITORY_SETTINGS_VERSION", "MISSING_REPOSITORY_SETTINGS_VERSION"}:

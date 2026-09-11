@@ -23,7 +23,7 @@ from app.jobs.models import (
 from app.review.deduplicator import fingerprint
 from app.review.diff import RepositoryCheckout
 from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
-from app.review.model_catalog import CLI_DEFAULT, catalog_version, spec_for
+from app.review.model_catalog import CLI_DEFAULT, db_catalog_version, load_db_catalog, spec_for
 from app.review.publisher import build_review_payload, review_marker
 from app.review.settings import EffectiveReviewSettings, resolve
 from app.review.validator import validate_findings_with_diagnostics
@@ -64,7 +64,20 @@ class ReviewService:
             await self.session.flush()
         if config is None:
             raise ReviewSkipped("repository is disabled")
-        effective = resolve(global_settings, config, self.github.settings)
+        model_catalog = await load_db_catalog(self.session)
+        snapshot_bound = job.model_source is not None or job.reasoning_source is not None
+        if snapshot_bound and job.model is not None:
+            snapshot_spec = spec_for(self.github.settings, job.model, model_catalog)
+            if (
+                snapshot_spec is None
+                or not snapshot_spec.selectable
+                or job.model_verification_id is None
+            ):
+                raise ReviewSkipped(
+                    "the model snapshot is no longer selectable; operator review is required",
+                    "MODEL_DISABLED_AFTER_ENQUEUE",
+                )
+        effective = resolve(global_settings, config, self.github.settings, catalog=model_catalog)
         if not effective.enabled:
             raise ReviewSkipped("repository is disabled")
         # New jobs carry their effective model/effort from enqueue time. Do
@@ -120,10 +133,10 @@ class ReviewService:
             if config.override_reasoning_effort is not None
             else "GLOBAL_DEFAULT"
         )
-        job.model_catalog_version = job.model_catalog_version or catalog_version(
-            self.github.settings
+        job.model_catalog_version = job.model_catalog_version or await db_catalog_version(
+            self.session
         )
-        model_spec = spec_for(self.github.settings, effective.model)
+        model_spec = spec_for(self.github.settings, effective.model, model_catalog)
         job.model_catalog_entry_id = job.model_catalog_entry_id or (
             model_spec.model_id if model_spec is not None else None
         )
@@ -193,6 +206,8 @@ class ReviewService:
                 effective.codex_timeout_seconds,
                 execution_id,
                 reasoning_effort=effective.reasoning_effort,
+                model_catalog_version=job.model_catalog_version,
+                model_verification_id=job.model_verification_id,
             )
         existing = set(
             (

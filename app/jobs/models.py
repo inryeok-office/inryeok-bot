@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -300,6 +301,71 @@ class AdminAuditLog(Base):
     target_id: Mapped[str] = mapped_column(String(128))
     summary: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CodexModelCatalog(Base):
+    """The PostgreSQL-backed, operator-approved model catalog.
+
+    This table is the production source of truth.  The JSON/file settings are
+    intentionally not represented here and are only supported by test/import
+    tooling for backwards compatibility.
+    """
+
+    __tablename__ = "codex_model_catalog"
+    __table_args__ = (UniqueConstraint("model_id", name="uq_codex_model_catalog_model_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model_id: Mapped[str] = mapped_column(String(200), index=True)
+    display_name: Mapped[str] = mapped_column(String(200))
+    purpose_ko: Mapped[str] = mapped_column(String(64), default="")
+    description_ko: Mapped[str] = mapped_column(String(500), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    recommended: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    availability_status: Mapped[str] = mapped_column(String(16), default="CANDIDATE", index=True)
+    source: Mapped[str] = mapped_column(String(16), default="OPERATOR")
+    supported_efforts: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    default_effort: Mapped[str | None] = mapped_column(String(16))
+    verified_cli_version: Mapped[str | None] = mapped_column(String(64))
+    schema_hash: Mapped[str | None] = mapped_column(String(64))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verified_by: Mapped[str | None] = mapped_column(String(255))
+    failure_code: Mapped[str | None] = mapped_column(String(64))
+    failure_message: Mapped[str | None] = mapped_column(String(300))
+    verification_id: Mapped[str | None] = mapped_column(String(128))
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CodexModelVerification(Base):
+    """Bounded evidence for one model/effort verification attempt."""
+
+    __tablename__ = "codex_model_verifications"
+    __table_args__ = (
+        UniqueConstraint("verification_id", name="uq_codex_model_verification_id"),
+        Index("ix_codex_model_verifications_model_effort", "model_id", "reasoning_effort"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    verification_id: Mapped[str] = mapped_column(String(128))
+    model_id: Mapped[str] = mapped_column(String(200), index=True)
+    reasoning_effort: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    cli_version: Mapped[str | None] = mapped_column(String(64))
+    schema_hash: Mapped[str | None] = mapped_column(String(64))
+    execution_id: Mapped[str | None] = mapped_column(String(64))
+    fingerprint: Mapped[str | None] = mapped_column(String(64))
+    elapsed_seconds: Mapped[float | None] = mapped_column(Float)
+    process_exit_code: Mapped[int | None] = mapped_column(Integer)
+    safe_error_code: Mapped[str | None] = mapped_column(String(64))
+    safe_error_category: Mapped[str | None] = mapped_column(String(64))
+    diagnostic_extraction_failed: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    verified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    actor_login: Mapped[str | None] = mapped_column(String(255))
 
 
 class ReviewRun(Base):
