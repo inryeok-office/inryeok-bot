@@ -83,6 +83,13 @@ class Settings(BaseSettings):
             return ",".join(str(item) for item in value)
         return value
 
+    @field_validator("codex_model_catalog_file", mode="before")
+    @classmethod
+    def normalize_catalog_file(cls, value: object) -> object:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return value
+
     @model_validator(mode="after")
     def validate_external_urls_and_secrets(self) -> "Settings":
         self.public_base_url = self.public_base_url.rstrip("/")

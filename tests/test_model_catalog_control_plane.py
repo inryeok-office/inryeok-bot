@@ -43,6 +43,11 @@ def test_missing_catalog_file_keeps_cli_default_fallback(tmp_path) -> None:
     assert load_catalog(settings) == ()
 
 
+def test_blank_catalog_file_setting_means_unconfigured() -> None:
+    settings = Settings(environment="test", codex_model_catalog_file="")
+    assert settings.codex_model_catalog_file is None
+
+
 def test_cli_default_is_nullable_and_has_provenance() -> None:
     assert normalize_model(CLI_DEFAULT) is None
     policy = resolve_repository_policy(GlobalReviewSettings(id=1), _repository(), _settings())
