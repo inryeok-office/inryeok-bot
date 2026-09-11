@@ -105,6 +105,10 @@ def _raw_catalog(settings: Settings) -> str:
     if not raw and settings.codex_model_catalog_file is not None:
         try:
             raw = settings.codex_model_catalog_file.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            # A configured path may be provisioned before the first candidate
+            # is approved.  Keep the safe CLI-default fallback operational.
+            return ""
         except OSError as exc:
             raise ValueError("unable to read Codex model catalog file") from exc
     return raw
