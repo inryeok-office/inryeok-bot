@@ -17,6 +17,7 @@ from app.admin.control_plane import (
     update_repository_policy,
 )
 from app.admin.metrics import usage_metrics
+from app.admin.presentation import format_admin_datetime
 from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.jobs.models import (
@@ -61,6 +62,7 @@ def _context(
         "principal": principal,
         "csrf_token": csrf_token(principal, settings),
         "app_name": settings.github_app_display_name,
+        "format_datetime": format_admin_datetime,
         **values,
     }
 
@@ -313,6 +315,18 @@ async def repositories(
         repository.id: resolve_repository_policy(global_settings, repository, settings)
         for repository in values
     }
+    latest_runs: dict[tuple[str, str], ReviewRun] = {}
+    recent = (
+        await session.execute(
+            select(ReviewRun, ReviewJob)
+            .join(ReviewJob, ReviewRun.job_id == ReviewJob.id)
+            .order_by(ReviewRun.created_at.desc())
+            .limit(200)
+        )
+    ).all()
+    for run, job in recent:
+        key = (job.repository_owner.casefold(), job.repository_name.casefold())
+        latest_runs.setdefault(key, run)
     return templates.TemplateResponse(
         request,
         "repositories.html",
@@ -323,6 +337,7 @@ async def repositories(
             repositories=values,
             repository_query=q or "",
             effective_by_repository=effective_by_repository,
+            latest_runs=latest_runs,
         ),
     )
 

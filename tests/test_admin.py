@@ -112,6 +112,9 @@ async def test_admin_static_design_system_is_local(app_client) -> None:
     assert "unpkg" not in response.text
     assert ".preset-grid" in response.text
     assert "prefers-reduced-motion" in response.text
+    script = await client.get("/admin/static/admin.js")
+    assert script.status_code == 200
+    assert "navigator.clipboard" in script.text
 
 
 @pytest.mark.asyncio

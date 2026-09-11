@@ -6,12 +6,12 @@
     <tbody>
     {% for job in jobs %}
       <tr>
-        <td>{{ status(job.status.value) }}</td>
-        <td><a class="repo-name" href="/admin/jobs/{{ job.id }}">{{ job.repository_owner }}/{{ job.repository_name }}</a><span class="repo-meta">PR #{{ job.pull_request_number }} · <code>{{ job.head_sha[:10] }}</code></span></td>
-        <td>{{ trigger_label(job.trigger_type) }}</td>
-        <td><time datetime="{{ job.created_at.isoformat() if job.created_at else '' }}">{{ job.created_at }}</time></td>
-        <td>{% if job.status.value == 'FAILED' %}<span class="text-danger">조치 필요</span>{% elif job.status.value == 'SUCCEEDED' %}<span class="text-success">완료</span>{% elif job.status.value == 'SKIPPED' %}<span class="muted">정책 또는 중복으로 건너뜀</span>{% else %}<span class="muted">{{ status_label(job.status.value) }}</span>{% endif %}</td>
-        <td><a class="button small secondary" href="/admin/jobs/{{ job.id }}">상세</a></td>
+        <td data-label="상태">{{ status(job.status.value) }}</td>
+        <td data-label="저장소 · PR"><a class="repo-name" href="/admin/jobs/{{ job.id }}">{{ job.repository_owner }}/{{ job.repository_name }}</a><span class="repo-meta">PR #{{ job.pull_request_number }} · <code class="identifier">{{ job.head_sha[:10] }}</code></span></td>
+        <td data-label="요청">{{ trigger_label(job.trigger_type) }}</td>
+        <td data-label="요청 시각"><time datetime="{{ job.created_at.isoformat() if job.created_at else '' }}">{{ format_datetime(job.created_at) }}</time></td>
+        <td data-label="결과">{% if job.status.value == 'FAILED' %}<span class="text-danger">조치 필요</span>{% elif job.status.value == 'SUCCEEDED' %}<span class="text-success">완료</span>{% elif job.status.value == 'SKIPPED' %}<span class="muted">정책 또는 중복으로 건너뜀</span>{% else %}<span class="muted">{{ status_label(job.status.value) }}</span>{% endif %}</td>
+        <td data-label="작업"><a class="button small secondary" href="/admin/jobs/{{ job.id }}">상세</a></td>
       </tr>
     {% else %}<tr><td colspan="6" class="empty">표시할 리뷰 작업이 없습니다.</td></tr>{% endfor %}
     </tbody>
