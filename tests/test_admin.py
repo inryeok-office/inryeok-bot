@@ -21,6 +21,7 @@ from app.jobs.models import (
     GlobalReviewSettings,
     JobStatus,
     RepositorySettings,
+    ReviewFindingDiagnostic,
     ReviewJob,
     ReviewRun,
     TriggerType,
@@ -221,6 +222,70 @@ async def test_admin_job_detail_explains_failure_and_finding_pipeline(app_client
     assert "Finding 처리" in response.text
     assert "모델 출력" in response.text
     assert "�" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_job_detail_distinguishes_rejected_findings_and_safe_diagnostics(
+    app_client,
+) -> None:
+    client, factory, *_ = await authenticated_repository(app_client)
+    async with factory() as session:
+        job = ReviewJob(
+            delivery_id="admin-rejected-detail",
+            installation_id=1,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=8,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.AUTO,
+            status=JobStatus.SUCCEEDED,
+        )
+        session.add(job)
+        await session.flush()
+        run = ReviewRun(
+            job_id=job.id,
+            base_sha=job.base_sha,
+            head_sha=job.head_sha,
+            summary="safe",
+            reviewed_file_count=1,
+            finding_count=0,
+            raw_findings_count=2,
+            schema_valid_findings_count=2,
+            rejected_findings_count=2,
+            published_findings_count=0,
+            rejection_counts='{"CAUSAL_ANCHOR_MISSING": 2}',
+        )
+        session.add(run)
+        await session.flush()
+        session.add(
+            ReviewFindingDiagnostic(
+                job_id=job.id,
+                review_run_id=run.id,
+                finding_index=1,
+                scope="PR",
+                category="API_CONTRACT",
+                relation_to_change="CROSS_FILE_IMPACT",
+                introduced_by_pr=True,
+                severity="HIGH",
+                confidence=0.95,
+                rejection_stage="grounding",
+                rejection_reason="CAUSAL_ANCHOR_MISSING",
+                path_is_changed=False,
+                changed_symbol_present=True,
+                causal_evidence_present=True,
+                expected_anchor_kind="ADDED_LINE",
+                anchor_matches=False,
+                diagnostic_schema_version="1",
+            )
+        )
+        await session.commit()
+        response = await client.get(f"/admin/jobs/{job.id}")
+    assert response.status_code == 200
+    assert 'data-outcome="FINDINGS_REJECTED"' in response.text
+    assert "거부된 Finding 안전 진단" in response.text
+    assert "CAUSAL_ANCHOR_MISSING" in response.text
+    assert "원문 title" not in response.text
 
 
 def test_installation_trust_does_not_depend_on_account_name() -> None:

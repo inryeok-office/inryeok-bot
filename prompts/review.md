@@ -21,6 +21,27 @@ specific changed path/symbol and causal chain in `causal_evidence`. Never emit
 worsened or exposed by it, omit it. A shared directory, keyword, or domain is
 not proof of cross-file impact.
 
+Use the scope and change relation precisely. LINE means a problem can be
+attached to an added RIGHT-side line. FILE means a changed-file contract or a
+deleted guard/feature that has no honest added-line location; keep `path` on
+the changed file and do not invent a line. PR means a concrete interaction
+spanning the pull request, such as a changed API and an unchanged caller, or a
+migration/deployment compatibility condition. A problem that is wholly in one
+changed file should be FILE (or LINE), not PR_WIDE.
+
+For every explicit `CROSS_FILE_IMPACT` or `PR_WIDE` finding, provide
+`changed_file_anchor` separately from prose. Use
+`{"kind":"ADDED_LINE","path":"...","line":N}` only for an actually
+added RIGHT-side line in the supplied diff. Use
+`{"kind":"CHANGED_FILE","path":"...","line":null}` only when the
+changed file has no added line, such as a deletion or rename-only change.
+The validator checks this anchor against the diff; mentioning a path or symbol
+in `causal_evidence` is not an anchor and is not proof. Keep
+`causal_evidence` as a concrete causal chain (what changed, which unchanged
+consumer/contract is affected, and the observable impact). Do not manufacture
+an anchor for an unchanged-file bug, same-directory association, or a general
+repository improvement.
+
 Review definite bugs, likely behavior errors, regressions, missing exception or
 null handling, data-integrity, transaction and concurrency problems, security
 and authorization flaws, API-contract violations, resource leaks, concrete
@@ -61,7 +82,8 @@ repository files.
 Return only the supplied JSON Schema. Every Finding must include `scope`,
 `category`, `severity`, `confidence`, `title`, `body`, `condition`, `impact`,
 `evidence`, `suggested_fix`, `domain`, `relation_to_change`,
-`introduced_by_pr`, `changed_symbol`, and `causal_evidence`; use null for
+`introduced_by_pr`, `changed_symbol`, `causal_evidence`, and
+`changed_file_anchor`; use null for
 non-applicable path, line, side, changed symbol, or causal evidence fields.
 Write `summary`, every Finding `title`,
 and every Finding `body` in natural Korean by default. Keep class, function,

@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,11 @@ from app.admin.control_plane import (
     update_repository_policy,
 )
 from app.admin.metrics import usage_metrics
-from app.admin.presentation import format_admin_datetime
+from app.admin.presentation import (
+    format_admin_datetime,
+    review_outcome_code,
+    review_outcome_label,
+)
 from app.config import Settings, get_settings
 from app.db.session import get_session
 from app.jobs.models import (
@@ -27,6 +32,7 @@ from app.jobs.models import (
     OpsIncident,
     RepositorySettings,
     ReviewDomain,
+    ReviewFindingDiagnostic,
     ReviewJob,
     ReviewRun,
 )
@@ -272,6 +278,16 @@ async def job_detail(
                 }
         except (TypeError, ValueError):
             rejection_counts = {}
+    rejection_diagnostics: Sequence[ReviewFindingDiagnostic] = []
+    if review_run:
+        rejection_diagnostics = (
+            await session.scalars(
+                select(ReviewFindingDiagnostic)
+                .where(ReviewFindingDiagnostic.review_run_id == review_run.id)
+                .order_by(ReviewFindingDiagnostic.finding_index)
+            )
+        ).all()
+    outcome_code = review_outcome_code(job, review_run)
     return templates.TemplateResponse(
         request,
         "job_detail.html",
@@ -282,6 +298,9 @@ async def job_detail(
             job=job,
             review_run=review_run,
             rejection_counts=rejection_counts,
+            rejection_diagnostics=rejection_diagnostics,
+            outcome_code=outcome_code,
+            outcome_label=review_outcome_label(outcome_code),
         ),
     )
 

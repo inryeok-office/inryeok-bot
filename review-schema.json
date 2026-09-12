@@ -10,7 +10,7 @@
       "type": "array", "maxItems": 100,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["scope", "path", "line", "side", "category", "severity", "confidence", "title", "body", "condition", "impact", "evidence", "suggested_fix", "domain", "relation_to_change", "introduced_by_pr", "changed_symbol", "causal_evidence"],
+        "required": ["scope", "path", "line", "side", "category", "severity", "confidence", "title", "body", "condition", "impact", "evidence", "suggested_fix", "domain", "relation_to_change", "introduced_by_pr", "changed_symbol", "causal_evidence", "changed_file_anchor"],
         "properties": {
           "scope": {"type": "string", "enum": ["LINE", "FILE", "PR"]},
           "path": {"type": ["string", "null"], "maxLength": 1024},
@@ -29,7 +29,17 @@
           "relation_to_change": {"type": ["string", "null"], "enum": ["DIRECT_CHANGE", "CHANGED_FILE_CONTEXT", "CROSS_FILE_IMPACT", "PR_WIDE", "PRE_EXISTING_UNRELATED", null]},
           "introduced_by_pr": {"type": ["boolean", "null"]},
           "changed_symbol": {"type": ["string", "null"], "maxLength": 300},
-          "causal_evidence": {"type": ["string", "null"], "maxLength": 1200}
+          "causal_evidence": {"type": ["string", "null"], "maxLength": 1200},
+          "changed_file_anchor": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["kind", "path", "line"],
+            "properties": {
+              "kind": {"type": "string", "enum": ["ADDED_LINE", "CHANGED_FILE"]},
+              "path": {"type": "string", "minLength": 1, "maxLength": 1024},
+              "line": {"type": ["integer", "null"], "minimum": 1}
+            }
+          }
         }
       }
     }

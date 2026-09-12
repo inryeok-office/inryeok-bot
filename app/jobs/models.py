@@ -403,6 +403,9 @@ class ReviewRun(Base):
     findings: Mapped[list["FindingRecord"]] = relationship(
         back_populates="review_run", cascade="all, delete-orphan"
     )
+    rejection_diagnostics: Mapped[list["ReviewFindingDiagnostic"]] = relationship(
+        back_populates="review_run", cascade="all, delete-orphan"
+    )
 
 
 class FindingRecord(Base):
@@ -419,6 +422,38 @@ class FindingRecord(Base):
     github_comment_id: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     review_run: Mapped[ReviewRun] = relationship(back_populates="findings")
+
+
+class ReviewFindingDiagnostic(Base):
+    """Non-content metadata for one Finding rejected before publication."""
+
+    __tablename__ = "review_finding_diagnostics"
+    __table_args__ = (
+        UniqueConstraint(
+            "review_run_id", "finding_index", name="uq_review_finding_diagnostic_index"
+        ),
+        Index("ix_review_finding_diagnostics_run", "review_run_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("review_jobs.id", ondelete="CASCADE"))
+    review_run_id: Mapped[int] = mapped_column(ForeignKey("review_runs.id", ondelete="CASCADE"))
+    finding_index: Mapped[int] = mapped_column(Integer)
+    scope: Mapped[str] = mapped_column(String(16))
+    category: Mapped[str] = mapped_column(String(32))
+    relation_to_change: Mapped[str | None] = mapped_column(String(32))
+    introduced_by_pr: Mapped[bool | None] = mapped_column(Boolean)
+    severity: Mapped[str] = mapped_column(String(16))
+    confidence: Mapped[float] = mapped_column(Float)
+    rejection_stage: Mapped[str] = mapped_column(String(32))
+    rejection_reason: Mapped[str] = mapped_column(String(64))
+    path_is_changed: Mapped[bool] = mapped_column(Boolean)
+    changed_symbol_present: Mapped[bool] = mapped_column(Boolean)
+    causal_evidence_present: Mapped[bool] = mapped_column(Boolean)
+    expected_anchor_kind: Mapped[str | None] = mapped_column(String(32))
+    anchor_matches: Mapped[bool | None] = mapped_column(Boolean)
+    diagnostic_schema_version: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    review_run: Mapped[ReviewRun] = relationship(back_populates="rejection_diagnostics")
 
 
 class ReviewFailureNotice(Base):

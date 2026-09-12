@@ -51,6 +51,33 @@ class ChangeRelation(StrEnum):
     PRE_EXISTING_UNRELATED = "PRE_EXISTING_UNRELATED"
 
 
+class ChangedAnchorKind(StrEnum):
+    ADDED_LINE = "ADDED_LINE"
+    CHANGED_FILE = "CHANGED_FILE"
+
+
+class ChangedFileAnchor(BaseModel):
+    """A machine-checkable location in the supplied PR diff.
+
+    This is deliberately separate from ``causal_evidence``: prose explains
+    the mechanism, while the anchor proves that the explanation starts at a
+    changed file/line.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    kind: ChangedAnchorKind
+    path: str = Field(min_length=1, max_length=1024)
+    line: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_line_shape(self) -> "ChangedFileAnchor":
+        if self.kind == ChangedAnchorKind.ADDED_LINE and self.line is None:
+            raise ValueError("ADDED_LINE anchors require a line")
+        if self.kind == ChangedAnchorKind.CHANGED_FILE and self.line is not None:
+            raise ValueError("CHANGED_FILE anchors cannot include a line")
+        return self
+
+
 class Finding(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scope: FindingScope = FindingScope.LINE
@@ -76,6 +103,7 @@ class Finding(BaseModel):
     introduced_by_pr: bool | None = None
     changed_symbol: str | None = Field(default=None, max_length=300)
     causal_evidence: str | None = Field(default=None, max_length=1200)
+    changed_file_anchor: ChangedFileAnchor | None = None
 
     @model_validator(mode="before")
     @classmethod

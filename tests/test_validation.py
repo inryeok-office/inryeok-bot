@@ -1,7 +1,16 @@
 import pytest
 from pydantic import ValidationError
 
-from app.codex.schemas import Category, Finding, FindingScope, ReviewOutput, Severity
+from app.codex.schemas import (
+    Category,
+    ChangedAnchorKind,
+    ChangedFileAnchor,
+    ChangeRelation,
+    Finding,
+    FindingScope,
+    ReviewOutput,
+    Severity,
+)
 from app.review.deduplicator import fingerprint
 from app.review.diff import ChangedFile
 from app.review.validator import validate_findings, validate_findings_with_diagnostics
@@ -174,6 +183,12 @@ def test_file_and_pr_findings_are_validated_and_published_as_summary_items():
                 condition="the caller and callee use different contracts",
                 impact="the changed API fails at runtime",
                 evidence="caller expects a value that the callee no longer returns",
+                relation_to_change=ChangeRelation.CROSS_FILE_IMPACT,
+                introduced_by_pr=True,
+                causal_evidence="api.py changes the contract; caller expects a returned value",
+                changed_file_anchor=ChangedFileAnchor(
+                    kind=ChangedAnchorKind.ADDED_LINE, path="api.py", line=4
+                ),
             ),
         ],
         changed,

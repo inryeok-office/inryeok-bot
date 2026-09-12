@@ -1,0 +1,329 @@
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/job/query/JobDiscordPayloadQueryPort.kt b/src/main/kotlin/team/inreok/getiserver/domain/job/query/JobDiscordPayloadQueryPort.kt
+index 32e893f..b69e124 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/job/query/JobDiscordPayloadQueryPort.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/job/query/JobDiscordPayloadQueryPort.kt
+@@ -45,0 +46,3 @@ interface JobDiscordPayloadQueryPort {
++
++    /** 관리자 Discord 전달 목록의 대상 학년 필터에 사용할 공고 ID를 조회한다. */
++    fun findIdsByTargetGrade(targetGrade: Int): Set<Long>
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/job/repository/JobRepository.kt b/src/main/kotlin/team/inreok/getiserver/domain/job/repository/JobRepository.kt
+index 662b27a..a17827d 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/job/repository/JobRepository.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/job/repository/JobRepository.kt
+@@ -20,0 +21,5 @@ interface JobRepository : JpaRepository<Job, Long> {
++    @Query("SELECT j.id FROM Job j WHERE j.targetGrade IS NULL OR j.targetGrade = :targetGrade")
++    fun findIdsByTargetGrade(
++        @Param("targetGrade") targetGrade: Int,
++    ): List<Long>
++
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/job/service/impl/JobDiscordPayloadQueryPortImpl.kt b/src/main/kotlin/team/inreok/getiserver/domain/job/service/impl/JobDiscordPayloadQueryPortImpl.kt
+index 0ed4f3b..c14ea93 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/job/service/impl/JobDiscordPayloadQueryPortImpl.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/job/service/impl/JobDiscordPayloadQueryPortImpl.kt
+@@ -49,0 +50,4 @@ class JobDiscordPayloadQueryPortImpl(
++
++    @Transactional(readOnly = true)
++    override fun findIdsByTargetGrade(targetGrade: Int): Set<Long> =
++        jobRepository.findIdsByTargetGrade(targetGrade).toSet()
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/notification/controller/DiscordDeliveryAdminController.kt b/src/main/kotlin/team/inreok/getiserver/domain/notification/controller/DiscordDeliveryAdminController.kt
+index 59d1ab6..0987207 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/notification/controller/DiscordDeliveryAdminController.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/notification/controller/DiscordDeliveryAdminController.kt
+@@ -124,0 +125,6 @@ class DiscordDeliveryAdminController(
++        @Parameter(
++            description = "대상 학년 Filter. 1, 2, 3 중 하나. 원본 공고/프로그램의 대상 학년에 해당 학년이 포함된 전달만 조회한다. Inquiry에는 적용되지 않는다.",
++            example = "2",
++        )
++        @RequestParam(required = false)
++        targetGrade: Int?,
+@@ -129,9 +135,22 @@ class DiscordDeliveryAdminController(
+-            discordDeliveryAdminQueryService.listRecent(
+-                status,
+-                pageable,
+-                startAt,
+-                endAt,
+-                targetType,
+-                channelId,
+-                targetName,
+-            ),
++            if (targetGrade == null) {
++                discordDeliveryAdminQueryService.listRecent(
++                    status,
++                    pageable,
++                    startAt,
++                    endAt,
++                    targetType,
++                    channelId,
++                    targetName,
++                )
++            } else {
++                discordDeliveryAdminQueryService.listRecentByTargetGrade(
++                    status,
++                    pageable,
++                    startAt,
++                    endAt,
++                    targetType,
++                    channelId,
++                    targetName,
++                    targetGrade,
++                )
++            },
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/notification/exception/DiscordDeliveryErrorCode.kt b/src/main/kotlin/team/inreok/getiserver/domain/notification/exception/DiscordDeliveryErrorCode.kt
+index 3a43428..a70be79 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/notification/exception/DiscordDeliveryErrorCode.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/notification/exception/DiscordDeliveryErrorCode.kt
+@@ -28,0 +29 @@ enum class DiscordDeliveryErrorCode(
++    DISCORD_DELIVERY_INVALID_TARGET_GRADE(HttpStatus.BAD_REQUEST, "대상 학년은 1, 2, 3 중 하나여야 합니다."),
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/notification/exception/DiscordDeliveryExceptions.kt b/src/main/kotlin/team/inreok/getiserver/domain/notification/exception/DiscordDeliveryExceptions.kt
+index 0aec78f..04de992 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/notification/exception/DiscordDeliveryExceptions.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/notification/exception/DiscordDeliveryExceptions.kt
+@@ -65,0 +66,3 @@ class DiscordDeliveryManualSendUnsupportedException(
++
++class DiscordDeliveryInvalidTargetGradeException :
++    BusinessException(DiscordDeliveryErrorCode.DISCORD_DELIVERY_INVALID_TARGET_GRADE)
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/notification/repository/DiscordDeliveryRepository.kt b/src/main/kotlin/team/inreok/getiserver/domain/notification/repository/DiscordDeliveryRepository.kt
+index 1d73d6b..c09f925 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/notification/repository/DiscordDeliveryRepository.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/notification/repository/DiscordDeliveryRepository.kt
+@@ -73,0 +74,47 @@ interface DiscordDeliveryRepository : JpaRepository<DiscordDelivery, Long> {
++    @Query(
++        """
++        SELECT d FROM DiscordDelivery d
++        WHERE (:status IS NULL OR d.status = :status)
++          AND (
++            d.lastAttemptAt >= COALESCE(:startAt, d.lastAttemptAt)
++            OR COALESCE(:startAt, d.lastAttemptAt) IS NULL
++          )
++          AND (
++            d.lastAttemptAt < COALESCE(:endAt, CURRENT_TIMESTAMP)
++            OR COALESCE(:endAt, d.lastAttemptAt) IS NULL
++          )
++          AND (:targetType IS NULL OR d.targetType = :targetType)
++          AND (:channelId IS NULL OR d.channelId = :channelId)
++          AND (
++            (d.targetType = team.inreok.getiserver.domain.notification.entity.type.DiscordDeliveryTargetType.JOB
++                AND d.targetId IN :jobTargetGradeIds)
++            OR (d.targetType = team.inreok.getiserver.domain.notification.entity.type.DiscordDeliveryTargetType.PROGRAM
++                AND d.targetId IN :programTargetGradeIds)
++          )
++          AND (
++            :hasTargetName = FALSE
++            OR (d.targetType = team.inreok.getiserver.domain.notification.entity.type.DiscordDeliveryTargetType.JOB
++                AND d.targetId IN :jobTargetIds)
++            OR (d.targetType = team.inreok.getiserver.domain.notification.entity.type.DiscordDeliveryTargetType.PROGRAM
++                AND d.targetId IN :programTargetIds)
++            OR (d.targetType = team.inreok.getiserver.domain.notification.entity.type.DiscordDeliveryTargetType.INQUIRY
++                AND d.targetId IN :inquiryTargetIds)
++          )
++        ORDER BY d.id DESC
++        """,
++    )
++    fun findRecentByTargetGrade(
++        @Param("status") status: DiscordDeliveryStatus?,
++        @Param("startAt") startAt: LocalDateTime? = null,
++        @Param("endAt") endAt: LocalDateTime? = null,
++        pageable: Pageable,
++        @Param("targetType") targetType: DiscordDeliveryTargetType? = null,
++        @Param("channelId") channelId: String? = null,
++        @Param("hasTargetName") hasTargetName: Boolean = false,
++        @Param("jobTargetIds") jobTargetIds: Collection<Long> = setOf(-1),
++        @Param("programTargetIds") programTargetIds: Collection<Long> = setOf(-1),
++        @Param("inquiryTargetIds") inquiryTargetIds: Collection<Long> = setOf(-1),
++        @Param("jobTargetGradeIds") jobTargetGradeIds: Collection<Long> = setOf(-1),
++        @Param("programTargetGradeIds") programTargetGradeIds: Collection<Long> = setOf(-1),
++    ): Page<DiscordDelivery>
++
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/notification/service/DiscordDeliveryAdminQueryService.kt b/src/main/kotlin/team/inreok/getiserver/domain/notification/service/DiscordDeliveryAdminQueryService.kt
+index e7cde63..68befe3 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/notification/service/DiscordDeliveryAdminQueryService.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/notification/service/DiscordDeliveryAdminQueryService.kt
+@@ -34,0 +35,11 @@ interface DiscordDeliveryAdminQueryService {
++
++    fun listRecentByTargetGrade(
++        status: DiscordDeliveryStatus?,
++        pageable: Pageable,
++        startAt: LocalDateTime? = null,
++        endAt: LocalDateTime? = null,
++        targetType: DiscordDeliveryTargetType? = null,
++        channelId: String? = null,
++        targetName: String? = null,
++        targetGrade: Int,
++    ): DiscordDeliveryListResponse
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/notification/service/impl/DiscordDeliveryAdminQueryServiceImpl.kt b/src/main/kotlin/team/inreok/getiserver/domain/notification/service/impl/DiscordDeliveryAdminQueryServiceImpl.kt
+index 3936261..752e2d4 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/notification/service/impl/DiscordDeliveryAdminQueryServiceImpl.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/notification/service/impl/DiscordDeliveryAdminQueryServiceImpl.kt
+@@ -15,0 +16 @@ import team.inreok.getiserver.domain.notification.entity.type.DiscordDeliveryTar
++import team.inreok.getiserver.domain.notification.exception.DiscordDeliveryInvalidTargetGradeException
+@@ -68 +68,0 @@ class DiscordDeliveryAdminQueryServiceImpl(
+-    @Transactional(readOnly = true)
+@@ -76,0 +77,25 @@ class DiscordDeliveryAdminQueryServiceImpl(
++    ): DiscordDeliveryListResponse =
++        listRecentInternal(status, pageable, startAt, endAt, targetType, channelId, targetName, null)
++
++    @Transactional(readOnly = true)
++    override fun listRecentByTargetGrade(
++        status: DiscordDeliveryStatus?,
++        pageable: Pageable,
++        startAt: LocalDateTime?,
++        endAt: LocalDateTime?,
++        targetType: DiscordDeliveryTargetType?,
++        channelId: String?,
++        targetName: String?,
++        targetGrade: Int,
++    ): DiscordDeliveryListResponse =
++        listRecentInternal(status, pageable, startAt, endAt, targetType, channelId, targetName, targetGrade)
++
++    private fun listRecentInternal(
++        status: DiscordDeliveryStatus?,
++        pageable: Pageable,
++        startAt: LocalDateTime?,
++        endAt: LocalDateTime?,
++        targetType: DiscordDeliveryTargetType?,
++        channelId: String?,
++        targetName: String?,
++        targetGrade: Int?,
+@@ -77,0 +103,3 @@ class DiscordDeliveryAdminQueryServiceImpl(
++        if (targetGrade != null && targetGrade !in MIN_TARGET_GRADE..MAX_TARGET_GRADE) {
++            throw DiscordDeliveryInvalidTargetGradeException()
++        }
+@@ -79,0 +108 @@ class DiscordDeliveryAdminQueryServiceImpl(
++        val targetGradeIds = targetGrade?.let { findTargetIdsByGrade(it, targetType) }
+@@ -81,0 +111 @@ class DiscordDeliveryAdminQueryServiceImpl(
++        val pageRequest = PageRequest.of(pageable.pageNumber, pageable.pageSize)
+@@ -83,12 +113,29 @@ class DiscordDeliveryAdminQueryServiceImpl(
+-            deliveryRepository.findRecent(
+-                status,
+-                startAt,
+-                endAt,
+-                PageRequest.of(pageable.pageNumber, pageable.pageSize),
+-                targetType,
+-                channelId,
+-                normalizedTargetName != null,
+-                targetIds?.get(DiscordDeliveryTargetType.JOB).orPlaceholder(),
+-                targetIds?.get(DiscordDeliveryTargetType.PROGRAM).orPlaceholder(),
+-                targetIds?.get(DiscordDeliveryTargetType.INQUIRY).orPlaceholder(),
+-            )
++            if (targetGrade == null) {
++                deliveryRepository.findRecent(
++                    status,
++                    startAt,
++                    endAt,
++                    pageRequest,
++                    targetType,
++                    channelId,
++                    normalizedTargetName != null,
++                    targetIds?.get(DiscordDeliveryTargetType.JOB).orPlaceholder(),
++                    targetIds?.get(DiscordDeliveryTargetType.PROGRAM).orPlaceholder(),
++                    targetIds?.get(DiscordDeliveryTargetType.INQUIRY).orPlaceholder(),
++                )
++            } else {
++                deliveryRepository.findRecentByTargetGrade(
++                    status,
++                    startAt,
++                    endAt,
++                    pageRequest,
++                    targetType,
++                    channelId,
++                    normalizedTargetName != null,
++                    targetIds?.get(DiscordDeliveryTargetType.JOB).orPlaceholder(),
++                    targetIds?.get(DiscordDeliveryTargetType.PROGRAM).orPlaceholder(),
++                    targetIds?.get(DiscordDeliveryTargetType.INQUIRY).orPlaceholder(),
++                    targetGradeIds?.get(DiscordDeliveryTargetType.JOB).orPlaceholder(),
++                    targetGradeIds?.get(DiscordDeliveryTargetType.PROGRAM).orPlaceholder(),
++                )
++            }
+@@ -120,0 +168,13 @@ class DiscordDeliveryAdminQueryServiceImpl(
++    private fun findTargetIdsByGrade(
++        targetGrade: Int,
++        targetType: DiscordDeliveryTargetType?,
++    ): Map<DiscordDeliveryTargetType, Set<Long>> =
++        buildMap {
++            if (targetType == null || targetType == DiscordDeliveryTargetType.JOB) {
++                put(DiscordDeliveryTargetType.JOB, jobPayloadQueryPort.findIdsByTargetGrade(targetGrade))
++            }
++            if (targetType == null || targetType == DiscordDeliveryTargetType.PROGRAM) {
++                put(DiscordDeliveryTargetType.PROGRAM, programPayloadQueryPort.findIdsByTargetGrade(targetGrade))
++            }
++        }
++
+@@ -220,0 +281,3 @@ class DiscordDeliveryAdminQueryServiceImpl(
++
++private const val MIN_TARGET_GRADE = 1
++private const val MAX_TARGET_GRADE = 3
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/program/query/ProgramDiscordPayloadQueryPort.kt b/src/main/kotlin/team/inreok/getiserver/domain/program/query/ProgramDiscordPayloadQueryPort.kt
+index 06d74db..f653dc9 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/program/query/ProgramDiscordPayloadQueryPort.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/program/query/ProgramDiscordPayloadQueryPort.kt
+@@ -34,0 +35,3 @@ interface ProgramDiscordPayloadQueryPort {
++
++    /** 관리자 Discord 전달 목록의 대상 학년 필터에 사용할 프로그램 ID를 조회한다. */
++    fun findIdsByTargetGrade(targetGrade: Int): Set<Long>
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/program/repository/ProgramRepository.kt b/src/main/kotlin/team/inreok/getiserver/domain/program/repository/ProgramRepository.kt
+index 7df0b82..7339336 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/program/repository/ProgramRepository.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/program/repository/ProgramRepository.kt
+@@ -22,0 +23,16 @@ interface ProgramRepository : JpaRepository<Program, Long> {
++    @Query(
++        """
++        SELECT p.id FROM Program p
++        WHERE NOT EXISTS (
++            SELECT g.id FROM ProgramTargetGrade g WHERE g.id.programId = p.id
++        )
++        OR EXISTS (
++            SELECT g.id FROM ProgramTargetGrade g
++            WHERE g.id.programId = p.id AND g.id.grade = :targetGrade
++        )
++        """,
++    )
++    fun findIdsByTargetGrade(
++        @Param("targetGrade") targetGrade: Int,
++    ): List<Long>
++
+diff --git a/src/main/kotlin/team/inreok/getiserver/domain/program/service/impl/ProgramDiscordPayloadQueryPortImpl.kt b/src/main/kotlin/team/inreok/getiserver/domain/program/service/impl/ProgramDiscordPayloadQueryPortImpl.kt
+index 8e307d9..907b153 100644
+--- a/src/main/kotlin/team/inreok/getiserver/domain/program/service/impl/ProgramDiscordPayloadQueryPortImpl.kt
++++ b/src/main/kotlin/team/inreok/getiserver/domain/program/service/impl/ProgramDiscordPayloadQueryPortImpl.kt
+@@ -47,0 +48,4 @@ class ProgramDiscordPayloadQueryPortImpl(
++
++    @Transactional(readOnly = true)
++    override fun findIdsByTargetGrade(targetGrade: Int): Set<Long> =
++        programRepository.findIdsByTargetGrade(targetGrade).toSet()
+diff --git a/src/test/kotlin/team/inreok/getiserver/domain/notification/service/impl/DiscordDeliveryAdminQueryServiceImplTest.kt b/src/test/kotlin/team/inreok/getiserver/domain/notification/service/impl/DiscordDeliveryAdminQueryServiceImplTest.kt
+index c3761b0..9b0fc36 100644
+--- a/src/test/kotlin/team/inreok/getiserver/domain/notification/service/impl/DiscordDeliveryAdminQueryServiceImplTest.kt
++++ b/src/test/kotlin/team/inreok/getiserver/domain/notification/service/impl/DiscordDeliveryAdminQueryServiceImplTest.kt
+@@ -302,0 +303,32 @@ class DiscordDeliveryAdminQueryServiceImplTest {
++    @Test
++    fun `targetGrade는 원본 대상 학년 ID를 Page 조회 전에 적용한다`() {
++        val delivery = delivery(id = 1L, template = DiscordMessageTemplate.JOB_PUBLISHED, targetId = 10L)
++        given(jobPayloadQueryPort.findIdsByTargetGrade(2)).willReturn(setOf(10L))
++        given(programPayloadQueryPort.findIdsByTargetGrade(2)).willReturn(setOf(20L))
++        given(
++            deliveryRepository.findRecentByTargetGrade(
++                null,
++                null,
++                null,
++                PageRequest.of(0, 20),
++                null,
++                null,
++                false,
++                setOf(-1L),
++                setOf(-1L),
++                setOf(-1L),
++                setOf(10L),
++                setOf(20L),
++            ),
++        ).willReturn(PageImpl(listOf(delivery), PageRequest.of(0, 20), 1L))
++        given(jobPayloadQueryPort.findDisplayNamesByIds(setOf(10L))).willReturn(mapOf(10L to "공고"))
++        given(deliveryRepository.findLatestDeliveryIds(anyTargetTypeSet(), anyIdSet())).willReturn(listOf(1L))
++
++        val response = service().listRecentByTargetGrade(null, PageRequest.of(0, 20), targetGrade = 2)
++
++        assertThat(response.totalElements).isEqualTo(1)
++        assertThat(response.content.single().targetId).isEqualTo(10L)
++        verify(jobPayloadQueryPort).findIdsByTargetGrade(2)
++        verify(programPayloadQueryPort).findIdsByTargetGrade(2)
++    }
++

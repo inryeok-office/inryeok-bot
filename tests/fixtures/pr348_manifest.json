@@ -1,0 +1,16 @@
+{
+  "repository": "inryeok-office/GETI-Server-V1",
+  "base_sha": "69f1c11e9c8594af8ed9f5bdf34fc18864983009",
+  "head_sha": "237b5590896b795175aaecf7d0d45a204ec78286",
+  "diff_sha256": "7832cf40545f8c9ee7433602584f2d2c14543145cc33f1779892185cfd0a99e8",
+  "review_job_id": 77,
+  "review_run_id": 63,
+  "historical_result": {"raw": 2, "schema_valid": 2, "scope_valid": 0, "published": 0},
+  "required_cases": [
+    "removed-transaction-guard-file",
+    "query-contract-cross-file",
+    "error-code-api-contract"
+  ],
+  "non_required_case": "similar-query-maintenance-risk",
+  "rejection_cases": ["unchanged-preexisting-bug", "filename-only-causal-evidence"]
+}

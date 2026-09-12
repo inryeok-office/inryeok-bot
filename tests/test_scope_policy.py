@@ -1,4 +1,4 @@
-from app.codex.schemas import ChangeRelation, FindingScope
+from app.codex.schemas import ChangedAnchorKind, ChangedFileAnchor, ChangeRelation, FindingScope
 from app.review.diff import ChangedFile, parse_unified_diff
 from app.review.validator import validate_findings_with_diagnostics
 from tests.test_validation import finding
@@ -39,7 +39,7 @@ def test_cross_file_requires_changed_path_or_symbol_in_causal_evidence():
         True,
         10,
     )
-    assert rejected.rejection_counts == {"INVALID_CROSS_FILE_IMPACT": 1}
+    assert rejected.rejection_counts == {"CAUSAL_ANCHOR_MISSING": 1}
     accepted = validate_findings_with_diagnostics(
         [
             finding(
@@ -48,10 +48,15 @@ def test_cross_file_requires_changed_path_or_symbol_in_causal_evidence():
                 relation_to_change=ChangeRelation.CROSS_FILE_IMPACT,
                 introduced_by_pr=True,
                 changed_symbol="Api.fetch",
-                causal_evidence="api.py changes Api.fetch contract",
+                causal_evidence="api.py changes Api.fetch contract; caller receives no value",
                 evidence="api.py Api.fetch now returns no value",
                 condition="caller invokes Api.fetch",
                 impact="request fails",
+                changed_file_anchor=ChangedFileAnchor(
+                    kind=ChangedAnchorKind.ADDED_LINE,
+                    path="api.py",
+                    line=4,
+                ),
             )
         ],
         changed,

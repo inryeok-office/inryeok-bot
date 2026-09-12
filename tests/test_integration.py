@@ -4,10 +4,26 @@ import pytest
 from sqlalchemy import BigInteger, select
 
 from app.codex.runner import FakeRunner
-from app.codex.schemas import Category, Finding, FindingScope, ReviewOutput, Severity
+from app.codex.schemas import (
+    Category,
+    ChangedAnchorKind,
+    ChangedFileAnchor,
+    ChangeRelation,
+    Finding,
+    FindingScope,
+    ReviewOutput,
+    Severity,
+)
 from app.config import Settings
 from app.github.client import GitHubAPIError
-from app.jobs.models import FindingRecord, RepositorySettings, ReviewJob, ReviewRun, TriggerType
+from app.jobs.models import (
+    FindingRecord,
+    RepositorySettings,
+    ReviewFindingDiagnostic,
+    ReviewJob,
+    ReviewRun,
+    TriggerType,
+)
 from app.review.diff import ChangedFile
 from app.review.service import ReviewService, ReviewSkipped
 
@@ -199,6 +215,12 @@ async def test_file_and_pr_findings_publish_in_review_summary(app_client, monkey
                 condition="the changed API is called through the old contract",
                 impact="the request fails at runtime",
                 evidence="caller expects a field the callee no longer returns",
+                relation_to_change=ChangeRelation.CROSS_FILE_IMPACT,
+                introduced_by_pr=True,
+                causal_evidence="api.py changes the contract; caller expects a missing field",
+                changed_file_anchor=ChangedFileAnchor(
+                    kind=ChangedAnchorKind.ADDED_LINE, path="app.py", line=2
+                ),
             ),
         ],
     )
@@ -223,7 +245,7 @@ async def test_file_and_pr_findings_publish_in_review_summary(app_client, monkey
         assert github.payload["comments"] == []
         assert "파일·PR 단위 검토" in github.payload["body"]
         run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == job.id))
-        assert run and run.finding_count == 2 and run.published_findings_count == 2
+    assert run and run.finding_count == 2 and run.published_findings_count == 2
 
 
 @pytest.mark.asyncio
@@ -561,3 +583,115 @@ async def test_disabled_repository_is_skipped_without_check_run(app_client) -> N
             await ReviewService(
                 session, github, FakeRunner(ReviewOutput(summary="unused", findings=[]))
             ).execute(job)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_rejected_findings_are_persisted_as_safe_diagnostics_before_publish(
+    app_client, monkeypatch
+) -> None:
+    _, factory = app_client
+    monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
+    output = ReviewOutput(
+        summary="one rejected finding",
+        findings=[
+            Finding(
+                scope=FindingScope.PR,
+                path=None,
+                category=Category.API_CONTRACT,
+                severity=Severity.HIGH,
+                confidence=0.97,
+                title="Raw title must not become diagnostic content",
+                body="Raw body is deliberately not stored in the diagnostic row.",
+                condition="an unchanged caller uses the changed API",
+                impact="the caller can fail",
+                evidence="the contract is incompatible",
+                relation_to_change=ChangeRelation.CROSS_FILE_IMPACT,
+                introduced_by_pr=True,
+                causal_evidence="app.py changed contract causes caller failure",
+            )
+        ],
+    )
+    async with factory() as session:
+        session.add(
+            RepositorySettings(installation_id=21, repository_owner="acme", repository_name="repo")
+        )
+        job = ReviewJob(
+            delivery_id="diagnostic-safe-row",
+            installation_id=21,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=31,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.AUTO,
+        )
+        session.add(job)
+        await session.commit()
+        github = FakeGitHub()
+        await ReviewService(session, github, FakeRunner(output)).execute(job)  # type: ignore[arg-type]
+        run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == job.id))
+        diagnostic = await session.scalar(
+            select(ReviewFindingDiagnostic).where(
+                ReviewFindingDiagnostic.review_run_id == run.id  # type: ignore[union-attr]
+            )
+        )
+        assert run and run.raw_findings_count == 1 and run.published_findings_count == 0
+        assert github.payload is not None and github.payload["comments"] == []
+        assert diagnostic and diagnostic.rejection_reason == "CAUSAL_ANCHOR_MISSING"
+        assert diagnostic.scope == "PR"
+        assert diagnostic.path_is_changed is False
+        assert diagnostic.causal_evidence_present is True
+        assert not hasattr(diagnostic, "title")
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_persistence_failure_aborts_before_github_publish(
+    app_client, monkeypatch
+) -> None:
+    _, factory = app_client
+    monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
+    output = ReviewOutput(
+        summary="diagnostic failure",
+        findings=[
+            Finding(
+                scope=FindingScope.PR,
+                path=None,
+                category=Category.API_CONTRACT,
+                severity=Severity.HIGH,
+                confidence=0.97,
+                title="Rejected",
+                body="Rejected",
+                condition="condition",
+                impact="impact",
+                evidence="evidence",
+                relation_to_change=ChangeRelation.CROSS_FILE_IMPACT,
+                introduced_by_pr=True,
+                causal_evidence="app.py changed contract causes caller failure",
+            )
+        ],
+    )
+
+    async def fail_diagnostics(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("diagnostic store unavailable")
+
+    monkeypatch.setattr(ReviewService, "_persist_rejection_diagnostics", fail_diagnostics)
+    async with factory() as session:
+        session.add(
+            RepositorySettings(installation_id=22, repository_owner="acme", repository_name="repo")
+        )
+        job = ReviewJob(
+            delivery_id="diagnostic-write-failure",
+            installation_id=22,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=32,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.AUTO,
+        )
+        session.add(job)
+        await session.commit()
+        github = FakeGitHub()
+        with pytest.raises(RuntimeError, match="diagnostic store"):
+            await ReviewService(session, github, FakeRunner(output)).execute(job)  # type: ignore[arg-type]
+        assert github.payload is None

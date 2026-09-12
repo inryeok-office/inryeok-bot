@@ -16,6 +16,7 @@ from app.jobs.models import (
     FindingRecord,
     GlobalReviewSettings,
     RepositorySettings,
+    ReviewFindingDiagnostic,
     ReviewJob,
     ReviewRun,
     TriggerType,
@@ -26,7 +27,7 @@ from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
 from app.review.model_catalog import CLI_DEFAULT, db_catalog_version, load_db_catalog, spec_for
 from app.review.publisher import build_review_payload, review_marker
 from app.review.settings import EffectiveReviewSettings, resolve
-from app.review.validator import validate_findings_with_diagnostics
+from app.review.validator import FindingRejectionDiagnostic, validate_findings_with_diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,33 @@ class ReviewSkipped(RuntimeError):
 class ReviewService:
     def __init__(self, session: AsyncSession, github: GitHubClient, runner: ReviewRunner) -> None:
         self.session, self.github, self.runner = session, github, runner
+
+    async def _persist_rejection_diagnostics(
+        self, run: ReviewRun, diagnostics: list[FindingRejectionDiagnostic]
+    ) -> None:
+        for diagnostic in diagnostics:
+            self.session.add(
+                ReviewFindingDiagnostic(
+                    job_id=run.job_id,
+                    review_run_id=run.id,
+                    finding_index=diagnostic.finding_index,
+                    scope=diagnostic.scope,
+                    category=diagnostic.category,
+                    relation_to_change=diagnostic.relation_to_change,
+                    introduced_by_pr=diagnostic.introduced_by_pr,
+                    severity=diagnostic.severity,
+                    confidence=diagnostic.confidence,
+                    rejection_stage=diagnostic.rejection_stage,
+                    rejection_reason=diagnostic.rejection_reason,
+                    path_is_changed=diagnostic.path_is_changed,
+                    changed_symbol_present=diagnostic.changed_symbol_present,
+                    causal_evidence_present=diagnostic.causal_evidence_present,
+                    expected_anchor_kind=diagnostic.expected_anchor_kind,
+                    anchor_matches=diagnostic.anchor_matches,
+                    diagnostic_schema_version=diagnostic.diagnostic_schema_version,
+                )
+            )
+        await self.session.flush()
 
     async def execute(self, job: ReviewJob, execution_id: str | None = None) -> None:
         # Keep direct callers (tests/administrative runners) on the same
@@ -324,6 +352,12 @@ class ReviewService:
         )
         self.session.add(run)
         await self.session.flush()
+        await self._persist_rejection_diagnostics(run, validation.rejection_diagnostics)
+        # Persist the safe result and diagnostics before any GitHub write.  A
+        # diagnostic insert/flush failure aborts here, so an unvalidated
+        # finding can never be published merely because observability failed.
+        await self.session.flush()
+        await self.session.commit()
         previous_auto_summary = None
         if job.trigger_type in {TriggerType.AUTO, TriggerType.RETRY}:
             previous_auto_summary = await self.session.scalar(

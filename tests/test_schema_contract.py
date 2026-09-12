@@ -22,6 +22,7 @@ def test_wire_schema_is_flat_strict_and_all_properties_required() -> None:
     finding = schema["properties"]["findings"]["items"]
     assert finding["additionalProperties"] is False
     assert set(finding["required"]) == set(finding["properties"])
+    assert finding["properties"]["changed_file_anchor"]["additionalProperties"] is False
 
 
 def test_wire_schema_accepts_all_scopes_with_null_non_applicable_fields() -> None:
