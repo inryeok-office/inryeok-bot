@@ -14,6 +14,7 @@ from app.admin.auth import (
     sign_session_id,
 )
 from app.admin.oauth import safe_admin_redirect
+from app.admin.presentation import review_outcome_code
 from app.config import Settings, get_settings
 from app.jobs.models import (
     AdminAuditLog,
@@ -291,6 +292,54 @@ async def test_admin_job_detail_distinguishes_rejected_findings_and_safe_diagnos
 def test_installation_trust_does_not_depend_on_account_name() -> None:
     assert Settings(environment="development").github_account_allowed("any-account")
     assert Settings(environment="test").github_account_allowed("any-account")
+
+
+def test_review_outcome_labels_cover_empty_rejected_publish_failure_and_historical() -> None:
+    def job(status: JobStatus) -> ReviewJob:
+        return ReviewJob(
+            delivery_id=f"outcome-{status.value}",
+            installation_id=1,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=1,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.AUTO,
+            status=status,
+        )
+
+    def run(**values: object) -> ReviewRun:
+        defaults: dict[str, object] = {
+            "job_id": 1,
+            "base_sha": "a" * 40,
+            "head_sha": "b" * 40,
+            "summary": "safe",
+            "reviewed_file_count": 1,
+            "finding_count": 0,
+            "raw_findings_count": 0,
+            "rejected_findings_count": 0,
+            "published_findings_count": 0,
+        }
+        defaults.update(values)
+        return ReviewRun(**defaults)
+
+    assert review_outcome_code(job(JobStatus.SUCCEEDED), run(raw_findings_count=0)) == (
+        "MODEL_NO_FINDINGS"
+    )
+    assert (
+        review_outcome_code(
+            job(JobStatus.SUCCEEDED),
+            run(raw_findings_count=1, rejected_findings_count=1, published_findings_count=0),
+        )
+        == "FINDINGS_REJECTED"
+    )
+    assert (
+        review_outcome_code(
+            job(JobStatus.FAILED), run(raw_findings_count=1, published_findings_count=1)
+        )
+        == "PUBLISH_FAILED"
+    )
+    assert review_outcome_code(job(JobStatus.SUCCEEDED), None) == "HISTORICAL_NO_DETAILS"
 
 
 def test_admin_redirect_stays_local() -> None:
