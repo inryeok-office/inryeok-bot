@@ -18,6 +18,30 @@ from app.codex.runner import CodexError
 from app.codex.schemas import ReviewOutput
 
 
+@pytest.mark.parametrize("name", ["C:/outside.py", "C:outside.py", "..\\outside.py"])
+def test_archive_rejects_cross_platform_paths(tmp_path, name):
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+        member = tarfile.TarInfo(name)
+        member.size = 1
+        archive.addfile(member, io.BytesIO(b"x"))
+    with pytest.raises(ValueError, match="cross-platform"):
+        _extract_archive(base64.b64encode(stream.getvalue()).decode(), tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_archive_rejects_expanded_bytes_before_extract(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.codex.executor.MAX_UNPACKED_BYTES", 2)
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+        member = tarfile.TarInfo("source.py")
+        member.size = 3
+        archive.addfile(member, io.BytesIO(b"xxx"))
+    with pytest.raises(ValueError, match="expanded byte"):
+        _extract_archive(base64.b64encode(stream.getvalue()).decode(), tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.asyncio
 async def test_executor_runner_supports_unix_socket(monkeypatch, tmp_path) -> None:
     (tmp_path / "source.py").write_text("value = 1", encoding="utf-8")

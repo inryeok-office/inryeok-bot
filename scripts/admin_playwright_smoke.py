@@ -197,6 +197,12 @@ def main() -> int:
                         raise RuntimeError(f"{path} did not render a document")
                     _check_layout(page, path, viewport_name)
                     _check_axe(page, axe_path, path)
+                    if path.startswith("/admin/jobs/"):
+                        page.locator("details").evaluate_all(
+                            "nodes => nodes.forEach(node => node.open = true)"
+                        )
+                        _check_layout(page, path, viewport_name + "-expanded")
+                        _check_axe(page, axe_path, path + "-expanded")
                     page.screenshot(
                         path=str(artifact_dir / f"{_safe_route(path)}-{viewport_name}.png"),
                         full_page=True,

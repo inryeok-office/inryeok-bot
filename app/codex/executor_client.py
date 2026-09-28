@@ -20,6 +20,7 @@ from app.codex.schemas import ReviewOutput
 
 MAX_ARCHIVE_BYTES = 25_000_000
 MAX_ARCHIVE_FILES = 20_000
+MAX_UNPACKED_BYTES = 50_000_000
 
 
 def _archive_workspace(checkout: Path) -> bytes:
@@ -33,6 +34,7 @@ def _archive_workspace(checkout: Path) -> bytes:
         tarfile.open(fileobj=compressed, mode="w") as archive,
     ):
         count = 0
+        unpacked_bytes = 0
         for candidate in sorted(root.rglob("*")):
             relative = candidate.relative_to(root)
             if ".git" in relative.parts:
@@ -44,6 +46,9 @@ def _archive_workspace(checkout: Path) -> bytes:
             count += 1
             if count > MAX_ARCHIVE_FILES:
                 raise CodexError("EXECUTOR_INPUT_LIMIT", "workspace file limit exceeded")
+            unpacked_bytes += candidate.stat().st_size
+            if unpacked_bytes > MAX_UNPACKED_BYTES:
+                raise CodexError("EXECUTOR_INPUT_LIMIT", "workspace expanded byte limit exceeded")
             info = archive.gettarinfo(str(candidate), arcname=relative.as_posix())
             info.mtime = info.uid = info.gid = 0
             info.uname = info.gname = ""

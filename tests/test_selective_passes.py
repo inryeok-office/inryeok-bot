@@ -214,3 +214,46 @@ async def test_process_budget_skips_extra_and_records_partial(app_client, tmp_pa
         records = (await session.scalars(select(ReviewPass).order_by(ReviewPass.id))).all()
         assert [record.state for record in records] == ["SUCCEEDED", "SKIPPED"]
         assert records[-1].reason == "PROCESS_BUDGET"
+
+
+@pytest.mark.asyncio
+async def test_durable_retrieval_preserves_historical_process_usage(app_client, tmp_path):
+    _, factory = app_client
+    async with factory() as session:
+        global_settings = GlobalReviewSettings(id=1)
+        repo = RepositorySettings(
+            installation_id=1, repository_owner="acme", repository_name="repo"
+        )
+        job = ReviewJob(
+            delivery_id="durable-usage",
+            installation_id=1,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=7,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.AUTO,
+        )
+        session.add_all([global_settings, repo, job])
+        await session.commit()
+        settings = Settings(environment="test")
+        runner = FakeRunner(ReviewOutput(summary="ok", findings=[]))
+        runner.last_process_count = 1
+        args = (
+            session,
+            job,
+            settings,
+            resolve(global_settings, repo, settings),
+            runner,
+            tmp_path,
+            "prompt",
+            (),
+            "a" * 32,
+        )
+        await execute_passes(*args)
+        record = await session.scalar(select(ReviewPass).where(ReviewPass.job_id == job.id))
+        duration = record.duration_ms
+        runner.last_process_count = 0
+        await execute_passes(*args)
+        assert record.process_count == 1
+        assert record.duration_ms == duration

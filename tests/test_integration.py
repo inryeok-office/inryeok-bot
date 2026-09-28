@@ -18,6 +18,8 @@ from app.config import Settings
 from app.github.client import GitHubAPIError
 from app.jobs.models import (
     FindingRecord,
+    GlobalReviewSettings,
+    JobStatus,
     RepositorySettings,
     ReviewFindingDiagnostic,
     ReviewJob,
@@ -70,6 +72,76 @@ class FakeCheckout:
 
     async def incremental_diff(self, previous: str, head: str) -> str:
         return self.diff_text
+
+
+@pytest.mark.asyncio
+async def test_new_head_duplicate_only_preserves_still_count_without_review(
+    app_client, monkeypatch
+):
+    _, factory = app_client
+    monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
+
+    class GitHub(FakeGitHub):
+        async def get_pull_request(self, *args):
+            return {
+                "state": "open",
+                "draft": False,
+                "merged": False,
+                "head": {"sha": "c" * 40},
+                "base": {"sha": "a" * 40},
+            }
+
+    output = ReviewOutput(
+        summary="same defect",
+        findings=[
+            Finding(
+                path="app.py",
+                line=2,
+                category=Category.NULL_SAFETY,
+                severity=Severity.HIGH,
+                confidence=0.95,
+                title="Crash",
+                body="This dereferences None.",
+            )
+        ],
+    )
+    async with factory() as session:
+        session.add_all(
+            [
+                GlobalReviewSettings(id=1, review_on_synchronize=True),
+                RepositorySettings(
+                    installation_id=1, repository_owner="acme", repository_name="repo"
+                ),
+            ]
+        )
+        values = dict(
+            installation_id=1,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=7,
+            base_sha="a" * 40,
+            trigger_type=TriggerType.AUTO,
+        )
+        first = ReviewJob(delivery_id="first-head", head_sha="b" * 40, **values)
+        session.add(first)
+        await session.commit()
+        await ReviewService(session, GitHub(), FakeRunner(output)).execute(first)
+        first.status = JobStatus.SUCCEEDED
+        second = ReviewJob(
+            delivery_id="next-head",
+            head_sha="c" * 40,
+            trigger_action="synchronize",
+            **values,
+        )
+        session.add(second)
+        await session.commit()
+        github = GitHub()
+        await ReviewService(session, github, FakeRunner(output)).execute(second)
+        run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == second.id))
+        assert run.duplicate_only and run.github_review_id is None
+        assert run.comparison_still_count == 1 and run.comparison_not_detected_count == 0
+        assert second.previous_reviewed_head == first.head_sha
+        assert github.payload is None
 
 
 @pytest.fixture(autouse=True)

@@ -13,7 +13,7 @@ import tarfile
 import tempfile
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import JSONResponse
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 MAX_ARCHIVE_BYTES = 25_000_000
 MAX_ARCHIVE_FILES = 20_000
+MAX_UNPACKED_BYTES = 50_000_000
 MAX_PROMPT_BYTES = 6_000_000
 DEFAULT_WORKSPACE_ROOT = Path("/var/lib/inryeok-bot-executor/workspaces")
 MANAGED_AGENTS = """# Inryeok Bot review workspace
@@ -65,8 +66,15 @@ def _extract_archive(encoded: str, destination: Path) -> None:
         members = archive.getmembers()
         if len(members) > MAX_ARCHIVE_FILES:
             raise ValueError("archive file limit exceeded")
+        if (
+            any(member.size < 0 for member in members)
+            or sum(member.size for member in members if member.isfile()) > MAX_UNPACKED_BYTES
+        ):
+            raise ValueError("archive expanded byte limit exceeded")
         root = destination.resolve()
         for member in members:
+            if PureWindowsPath(member.name).drive or "\\" in member.name:
+                raise ValueError("unsafe cross-platform archive path")
             name = Path(member.name)
             target = (root / name).resolve()
             if name.is_absolute() or ".." in name.parts or not target.is_relative_to(root):

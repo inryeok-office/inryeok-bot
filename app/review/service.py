@@ -394,6 +394,7 @@ class ReviewService:
                     .join(ReviewRun, FindingRecord.review_run_id == ReviewRun.id)
                     .join(ReviewJob, ReviewRun.job_id == ReviewJob.id)
                     .where(
+                        ReviewJob.installation_id == job.installation_id,
                         ReviewJob.repository_owner == job.repository_owner,
                         ReviewJob.repository_name == job.repository_name,
                         ReviewJob.pull_request_number == job.pull_request_number,
@@ -506,10 +507,15 @@ class ReviewService:
                     )
                 ).all()
             )
+        observed_fingerprints = published_fingerprints | {
+            fingerprint(output.findings[item.finding_index - 1])
+            for item in validation.rejection_diagnostics
+            if item.rejection_reason == "DUPLICATE" and job.trigger_action == "synchronize"
+        }
         comparison = {
-            "new": len(published_fingerprints - prior_fingerprints),
-            "still": len(published_fingerprints & prior_fingerprints),
-            "not_detected": len(prior_fingerprints - published_fingerprints),
+            "new": len(observed_fingerprints - prior_fingerprints),
+            "still": len(observed_fingerprints & prior_fingerprints),
+            "not_detected": len(prior_fingerprints - observed_fingerprints),
         }
         run = ReviewRun(
             partial_review=output.partial,

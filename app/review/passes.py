@@ -250,8 +250,11 @@ async def execute_passes(
             partial = True
             continue
         record.state = "SUCCEEDED"
-        record.process_count = getattr(runner, "last_process_count", None)
-        record.duration_ms = int((time.monotonic() - started) * 1000)
+        # Durable retrieval launches no new process, but must not erase the
+        # historical execution's process count or duration in the usage ledger.
+        if prior is None:
+            record.process_count = getattr(runner, "last_process_count", None)
+            record.duration_ms = int((time.monotonic() - started) * 1000)
         record.raw_count = len(result.findings)
         await session.commit()
         if pass_type == GENERAL:
