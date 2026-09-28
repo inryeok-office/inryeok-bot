@@ -1,0 +1,147 @@
+{
+  "repository": "team-washer/Washer-Backend-v2",
+  "pr_number": 190,
+  "base_sha": "2c63c97d8491106c6c7ec58b682539233ad85ef6",
+  "head_sha": "c54c3cafa584525bb802966234f037ce98edd6b8",
+  "diff_sha256": "fdb8fe0344ed61f5837692ab584943012d985b7ea349ca72fd6d5033ae26e26e",
+  "changed_files": [
+    "src/main/java/team/washer/server/v2/global/common/error/handler/GlobalExceptionHandler.java",
+    "src/main/java/team/washer/server/v2/global/thirdparty/aws/cloudwatch/appender/CloudWatchAppender.java",
+    "src/test/java/team/washer/server/v2/global/common/error/handler/GlobalExceptionHandlerTest.java",
+    "src/test/java/team/washer/server/v2/global/thirdparty/aws/cloudwatch/appender/CloudWatchAppenderTest.java"
+  ],
+  "head_timing": "INITIAL",
+  "expected": [
+    {
+      "id": "discord_webhook_token_exposure",
+      "path": "src/main/java/team/washer/server/v2/global/thirdparty/aws/cloudwatch/appender/CloudWatchAppender.java",
+      "symbol": "sanitize",
+      "category": "SECURITY",
+      "causal_chain": [
+        "throwable",
+        "webhook",
+        "credential"
+      ],
+      "severities": [
+        "HIGH",
+        "MEDIUM"
+      ],
+      "scope": "FILE",
+      "relation_to_change": "DIRECT_CHANGE",
+      "required_changed_file_anchor": true,
+      "required_causal_evidence": true,
+      "fix_commit": "40cf31ac61e01551a1d060072bae0143b8681392",
+      "human_accepted": true,
+      "initial_head_present": true,
+      "follow_up_only": false
+    },
+    {
+      "id": "root_cause_lost_by_truncation",
+      "path": "src/main/java/team/washer/server/v2/global/thirdparty/aws/cloudwatch/appender/CloudWatchAppender.java",
+      "symbol": "escapeAndTruncate",
+      "category": "EXCEPTION_HANDLING",
+      "causal_chain": [
+        "outer stack",
+        "cause",
+        "truncation"
+      ],
+      "severities": [
+        "MEDIUM",
+        "MEDIUM"
+      ],
+      "scope": "FILE",
+      "relation_to_change": "DIRECT_CHANGE",
+      "required_changed_file_anchor": true,
+      "required_causal_evidence": true,
+      "fix_commit": "40cf31ac61e01551a1d060072bae0143b8681392",
+      "human_accepted": true,
+      "initial_head_present": true,
+      "follow_up_only": false
+    },
+    {
+      "id": "cloudwatch_batch_byte_limit",
+      "path": "src/main/java/team/washer/server/v2/global/thirdparty/aws/cloudwatch/appender/CloudWatchAppender.java",
+      "symbol": "formatMessage",
+      "category": "API_CONTRACT",
+      "causal_chain": [
+        "utf-8",
+        "batch",
+        "discard"
+      ],
+      "severities": [
+        "HIGH",
+        "MEDIUM"
+      ],
+      "scope": "FILE",
+      "relation_to_change": "DIRECT_CHANGE",
+      "required_changed_file_anchor": true,
+      "required_causal_evidence": true,
+      "fix_commit": "40cf31ac61e01551a1d060072bae0143b8681392",
+      "human_accepted": true,
+      "initial_head_present": true,
+      "follow_up_only": false
+    },
+    {
+      "id": "sql_exception_pii_leak",
+      "path": "src/main/java/team/washer/server/v2/global/thirdparty/aws/cloudwatch/appender/CloudWatchAppender.java",
+      "symbol": "formatMessage",
+      "category": "SECURITY",
+      "causal_chain": [
+        "sql",
+        "exception",
+        "personal"
+      ],
+      "severities": [
+        "HIGH",
+        "MEDIUM"
+      ],
+      "scope": "FILE",
+      "relation_to_change": "DIRECT_CHANGE",
+      "required_changed_file_anchor": true,
+      "required_causal_evidence": true,
+      "fix_commit": "40cf31ac61e01551a1d060072bae0143b8681392",
+      "human_accepted": true,
+      "initial_head_present": true,
+      "follow_up_only": false
+    },
+    {
+      "id": "console_masking_inconsistency",
+      "path": "src/main/java/team/washer/server/v2/global/thirdparty/aws/cloudwatch/appender/CloudWatchAppender.java",
+      "symbol": "sanitize",
+      "category": "SECURITY",
+      "causal_chain": [
+        "console",
+        "appender",
+        "unmasked"
+      ],
+      "severities": [
+        "HIGH",
+        "MEDIUM"
+      ],
+      "scope": "FILE",
+      "relation_to_change": "DIRECT_CHANGE",
+      "required_changed_file_anchor": true,
+      "required_causal_evidence": true,
+      "fix_commit": "40cf31ac61e01551a1d060072bae0143b8681392",
+      "human_accepted": true,
+      "initial_head_present": true,
+      "follow_up_only": false
+    }
+  ],
+  "allowed": [
+    "full_string_regex_cost"
+  ],
+  "rejected": [
+    "duplicate_branch_style",
+    "trace_id_style",
+    "test_convention_only",
+    "follow_up_escape_rewrite",
+    "follow_up_versioned_webhook_masking"
+  ],
+  "evidence_notes": [
+    "Pinned commit diff shows throwable addition, prefix truncation and key-only sanitization.",
+    "Pinned logback-spring.xml activates CONSOLE and CLOUD_WATCH in stage,prod; CONSOLE uses %msg.",
+    "Pinned flushBatch batches by count (50), generic exception returns without requeue.",
+    "Five identities accepted in human replies and fixed in 40cf31a; performance objection was disputed."
+  ]
+}

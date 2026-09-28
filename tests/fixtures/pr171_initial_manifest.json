@@ -1,0 +1,41 @@
+{
+  "repository": "team-washer/Washer-Backend-v2",
+  "pr_number": 171,
+  "base_sha": "00b8176d550a95ffa27c7ce9615d6991890a830f",
+  "head_sha": "3bbf0df6baae704f7e097924e49bfe59eb558875",
+  "diff_sha256": "2fd455027c454589beeaf06ef7c5b66edb01549782ffba4de824cde9d96eecc9",
+  "changed_files": [
+    "build.gradle.kts",
+    "gradle.properties",
+    "src/main/java/team/washer/server/v2/domain/notification/service/DeleteFcmTokenIfMatchesService.java",
+    "src/main/java/team/washer/server/v2/domain/notification/service/impl/DeleteFcmTokenIfMatchesServiceImpl.java",
+    "src/main/java/team/washer/server/v2/domain/notification/support/FcmNotificationSupport.java",
+    "src/main/java/team/washer/server/v2/domain/user/repository/UserRepository.java",
+    "src/test/java/team/washer/server/v2/domain/notification/service/DeleteFcmTokenIfMatchesServiceTest.java",
+    "src/test/java/team/washer/server/v2/domain/notification/support/FcmNotificationSupportTest.java",
+    "src/test/java/team/washer/server/v2/domain/user/repository/UserRepositoryFcmTokenConcurrencyTest.java",
+    "src/test/java/team/washer/server/v2/domain/user/repository/UserRepositoryFcmTokenTest.java"
+  ],
+  "head_timing": "INITIAL",
+  "expected": [],
+  "allowed": [
+    "outer_persistence_context_stale_token"
+  ],
+  "rejected": [
+    "follow_up_after_commit_unchecked_exception",
+    "follow_up_dead_send_api"
+  ],
+  "follow_up": [
+    {
+      "id": "bulk_update_bypasses_version",
+      "introduced_head": "6e740337cdc8c2dd964960a79bd3a1d23e09b348",
+      "fix_commit": "34a97a087d8bf834ca6ab9032d9b9d974d420d2c",
+      "human_accepted": true,
+      "initial_recall_target": false
+    }
+  ],
+  "evidence_notes": [
+    "Initial bot finding is already present in GitHub review; conditional outer-context risk remains allowed, not a new missed target.",
+    "Subsequent afterCommit findings are attached to 6e74033, excluded from initial-head recall."
+  ]
+}
