@@ -22,6 +22,7 @@ from app.jobs.models import (
     TriggerType,
 )
 from app.review.deduplicator import fingerprint
+from app.review.diagnostics import StageCounts, context_manifest
 from app.review.diff import RepositoryCheckout
 from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
 from app.review.model_catalog import CLI_DEFAULT, db_catalog_version, load_db_catalog, spec_for
@@ -199,6 +200,9 @@ class ReviewService:
         )
         async with manager as checkout:
             changed = await manager.fetch_and_diff(job.base_sha, job.head_sha, patterns)
+            job.context_manifest = context_manifest(
+                checkout, manager.diff_text, list(changed)
+            ).model_dump()
             detection = detect_domains(list(changed))
             domains = effective_domains(
                 effective.review_domain_mode, effective.manual_review_domains, detection
@@ -264,6 +268,21 @@ class ReviewService:
             effective.review_profile,
         )
         findings = validation.findings
+        scope_rejections = sum(
+            item.rejection_stage in {"scope", "relation", "grounding"}
+            for item in validation.rejection_diagnostics
+        )
+        counts = StageCounts(
+            raw=len(output.findings),
+            schema_valid=len(output.findings),
+            scope_valid=len(output.findings) - scope_rejections,
+            evidence_valid=validation.evidence_count,
+            deduplicated=validation.deduplicated_count,
+            ranked=len(findings),
+            publishable=len(findings),
+            published=0,
+            rejected=sum(validation.rejection_counts.values()),
+        )
         changed_lines_count = sum(len(file.added_lines) for file in changed.values())
         published_fingerprints = {fingerprint(item) for item in findings}
         prior_run = await self.session.scalar(
@@ -306,6 +325,8 @@ class ReviewService:
             "not_detected": len(prior_fingerprints - published_fingerprints),
         }
         run = ReviewRun(
+            stage_counts=counts.model_dump(),
+            publisher_fallback=False,
             job_id=job.id,
             base_sha=job.base_sha,
             head_sha=job.head_sha,
@@ -426,6 +447,7 @@ class ReviewService:
                     # failures, and never invent a line location.
                     if exc.status_code != 422 or not payload.get("comments"):
                         raise
+                    run.publisher_fallback = True
                     fallback_payload = build_review_payload(
                         findings,
                         len(changed),
@@ -469,6 +491,8 @@ class ReviewService:
                         raise
                     posted = {"id": recovered_id}
                 run.github_review_id = int(posted["id"])
+        counts.published = len(findings) if run.github_review_id is not None else 0
+        run.stage_counts = StageCounts.model_validate(counts.model_dump()).model_dump()
         for finding in findings:
             # FindingRecord is the legacy inline-finding index. FILE/PR
             # findings are retained in the ReviewRun summary and must not be

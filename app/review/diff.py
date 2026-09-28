@@ -23,7 +23,13 @@ def _git_authorization_header(token: str) -> str:
 def normalize_path(value: str) -> str:
     value = value.replace("\\", "/").removeprefix("a/").removeprefix("b/")
     path = PurePosixPath(value)
-    if not value or path.is_absolute() or ".." in path.parts or "\x00" in value:
+    if (
+        not value
+        or path.is_absolute()
+        or ".." in path.parts
+        or "\x00" in value
+        or re.match(r"^[A-Za-z]:", value)
+    ):
         raise ValueError("unsafe repository path")
     return path.as_posix()
 
