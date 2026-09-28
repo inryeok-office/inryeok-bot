@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.codex.prompt import build_prompt
 from app.codex.runner import ReviewRunner
+from app.codex.schemas import Finding
 from app.github.client import GitHubAPIError, GitHubClient
 from app.jobs.models import (
     FindingRecord,
@@ -20,6 +21,7 @@ from app.jobs.models import (
     RepositorySettings,
     ReviewFindingDiagnostic,
     ReviewJob,
+    ReviewPass,
     ReviewRun,
     TriggerType,
 )
@@ -27,9 +29,10 @@ from app.jobs.repository import JobRepository
 from app.review.context import ContextBudget, select_context
 from app.review.deduplicator import fingerprint
 from app.review.diagnostics import StageCounts, context_manifest
-from app.review.diff import RepositoryCheckout
+from app.review.diff import RepositoryCheckout, filter_unified_diff
 from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
 from app.review.model_catalog import CLI_DEFAULT, db_catalog_version, load_db_catalog, spec_for
+from app.review.passes import execute_passes
 from app.review.publisher import build_review_payload, review_marker
 from app.review.risks import detect_risks
 from app.review.settings import EffectiveReviewSettings, resolve
@@ -47,13 +50,20 @@ class ReviewSkipped(RuntimeError):
 class ReviewService:
     def __init__(self, session: AsyncSession, github: GitHubClient, runner: ReviewRunner) -> None:
         self.session, self.github, self.runner = session, github, runner
+        self._pass_origins: list[str] = []
+        self._candidates: list[Finding] = []
 
     async def _persist_rejection_diagnostics(
         self, run: ReviewRun, diagnostics: list[FindingRejectionDiagnostic]
     ) -> None:
         for diagnostic in diagnostics:
+            candidate = self._candidates[diagnostic.finding_index - 1]
             self.session.add(
                 ReviewFindingDiagnostic(
+                    pass_type=self._pass_origins[diagnostic.finding_index - 1],
+                    dedup_fingerprint=fingerprint(candidate),
+                    path_present=candidate.path is not None,
+                    line_present=candidate.line is not None,
                     job_id=run.job_id,
                     review_run_id=run.id,
                     finding_index=diagnostic.finding_index,
@@ -287,6 +297,7 @@ class ReviewService:
         )
         async with manager as checkout:
             changed = await manager.fetch_and_diff(job.base_sha, job.head_sha, patterns)
+            prompt_diff = filter_unified_diff(manager.diff_text, set(changed))
             incremental = ""
             if job.previous_reviewed_head:
                 incremental = await manager.incremental_diff(
@@ -296,7 +307,7 @@ class ReviewService:
             job.context_manifest = context_manifest(
                 checkout, manager.diff_text, list(changed)
             ).model_dump()
-            signals = detect_risks(manager.diff_text)
+            signals = detect_risks(prompt_diff)
             pack = select_context(
                 checkout,
                 list(changed),
@@ -319,6 +330,7 @@ class ReviewService:
                 "truncated": pack.truncated,
                 "truncation_reasons": list(pack.reasons),
                 "size_excluded_files": pack.excluded_size,
+                "prompt_diff_bytes": len(prompt_diff.encode("utf-8")),
             }
             detection = detect_domains(list(changed))
             domains = effective_domains(
@@ -347,7 +359,7 @@ class ReviewService:
                     "ignore_patterns": patterns,
                     "risk_signals": signals,
                 },
-                manager.diff_text,
+                prompt_diff,
                 related_context=(
                     "Prior reviewed head: "
                     + (job.previous_reviewed_head or "UNKNOWN")
@@ -360,16 +372,21 @@ class ReviewService:
                 ),
             )
             await self.session.commit()
-            output = await self.runner.run(
+            if execution_id is None:
+                raise ValueError("execution identity must be bound before orchestration")
+            output = await execute_passes(
+                self.session,
+                job,
+                self.github.settings,
+                effective,
+                self.runner,
                 checkout,
                 prompt,
-                effective.model,
-                effective.codex_timeout_seconds,
+                signals,
                 execution_id,
-                reasoning_effort=effective.reasoning_effort,
-                model_catalog_version=job.model_catalog_version,
-                model_verification_id=job.model_verification_id,
             )
+            self._candidates = list(output.findings)
+            self._pass_origins = output.origins
         existing = set(
             (
                 await self.session.scalars(
@@ -424,6 +441,20 @@ class ReviewService:
             effective.review_profile,
         )
         findings = validation.findings
+        contributed = {id(finding) for finding in findings}
+        pass_records = (
+            await self.session.scalars(select(ReviewPass).where(ReviewPass.job_id == job.id))
+        ).all()
+        for record in pass_records:
+            if record.raw_count is None:
+                continue
+            contribution = sum(
+                origin == record.pass_type and id(candidate) in contributed
+                for origin, candidate in zip(output.origins, output.findings, strict=True)
+            )
+            record.contribution_count = contribution
+            record.accepted_count = contribution
+            record.rejected_count = record.raw_count - contribution
         scope_rejections = sum(
             item.rejection_stage in {"scope", "relation", "grounding"}
             for item in validation.rejection_diagnostics
@@ -481,6 +512,7 @@ class ReviewService:
             "not_detected": len(prior_fingerprints - published_fingerprints),
         }
         run = ReviewRun(
+            partial_review=output.partial,
             duplicate_only=bool(output.findings)
             and not findings
             and validation.rejection_counts == {"DUPLICATE": len(output.findings)},
@@ -506,7 +538,7 @@ class ReviewService:
             deduplicated_findings_count=validation.deduplicated_count,
             scope_valid_findings_count=validation.changed_file_count,
             rejected_findings_count=sum(validation.rejection_counts.values()),
-            published_findings_count=validation.published_count,
+            published_findings_count=0,
             rejection_counts=json.dumps(validation.rejection_counts, sort_keys=True),
             published_finding_fingerprints=json.dumps(sorted(published_fingerprints)),
             comparison_new_count=comparison["new"],
@@ -607,6 +639,7 @@ class ReviewService:
                     if exc.status_code != 422 or not payload.get("comments"):
                         raise
                     run.publisher_fallback = True
+                    await self.session.commit()
                     fallback_payload = build_review_payload(
                         findings,
                         len(changed),
@@ -651,6 +684,7 @@ class ReviewService:
                     posted = {"id": recovered_id}
                 run.github_review_id = int(posted["id"])
         counts.published = len(findings) if run.github_review_id is not None else 0
+        run.published_findings_count = counts.published
         run.stage_counts = StageCounts.model_validate(counts.model_dump()).model_dump()
         for finding in findings:
             # FindingRecord is the legacy inline-finding index. FILE/PR
@@ -671,6 +705,12 @@ class ReviewService:
                     github_comment_id=None,
                 )
             )
-        job.terminal_outcome = "SUCCEEDED_NO_FINDINGS" if not findings else "SUCCEEDED"
+        job.terminal_outcome = (
+            "PARTIAL_REVIEW"
+            if output.partial
+            else "SUCCEEDED_NO_FINDINGS"
+            if not findings
+            else "SUCCEEDED"
+        )
         await self.session.commit()
         return len(findings)

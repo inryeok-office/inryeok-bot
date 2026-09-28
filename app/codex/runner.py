@@ -105,6 +105,7 @@ class CodexError(RuntimeError):
         self.stderr_byte_length = 0
         self.correlation_id: str | None = None
         self.stage = "codex_exec"
+        self.process_count: int | None = None
 
 
 def _error_text(stdout: bytes, stderr: bytes) -> str:
@@ -351,6 +352,7 @@ class CodexRunner:
 
     def __init__(self, settings: Settings, schema_path: Path | None = None) -> None:
         self.settings = settings
+        self.last_process_count = 0
         configured_schema = schema_path or Path(
             os.environ.get("CODEX_SCHEMA_PATH", "review-schema.json")
         )
@@ -433,6 +435,7 @@ class CodexRunner:
         model_verification_id: str | None = None,
     ) -> ReviewOutput:
         self._validate_schema_definition()
+        self.last_process_count = 0
         command = [
             self.settings.codex_command,
             "exec",
@@ -499,6 +502,7 @@ class CodexRunner:
                 )
             except FileNotFoundError as exc:
                 raise CodexError("CODEX_NOT_FOUND", "Codex CLI is not installed") from exc
+            self.last_process_count = 1
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(prompt.encode()),

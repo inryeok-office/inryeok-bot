@@ -191,10 +191,15 @@ def _path_is_changed(finding: Finding, changed: dict[str, ChangedFile]) -> bool:
 
 
 def _expected_anchor_kind(
-    finding: Finding, changed: dict[str, ChangedFile]
+    finding: Finding,
+    changed: dict[str, ChangedFile],
+    require_anchor: bool = False,
 ) -> ChangedAnchorKind | None:
     relation = _relation(finding)
-    if relation not in {ChangeRelation.CROSS_FILE_IMPACT, ChangeRelation.PR_WIDE}:
+    if not require_anchor and relation not in {
+        ChangeRelation.CROSS_FILE_IMPACT,
+        ChangeRelation.PR_WIDE,
+    }:
         return None
     candidate_path = None
     if finding.changed_file_anchor is not None:
@@ -356,7 +361,20 @@ def validate_findings_with_diagnostics(
         )
 
     minimum_order = ORDER[Severity(minimum_severity)]
-    for finding_index, finding in enumerate(findings, 1):
+    indexed = list(enumerate(findings, 1))
+    indexed.sort(
+        key=lambda pair: (
+            -ORDER[pair[1].severity],
+            -pair[1].confidence,
+            -int(bool(pair[1].causal_evidence and pair[1].changed_file_anchor)),
+        )
+    )
+    for finding_index, finding in indexed:
+        if finding.defect_identity is not None and not _anchor_matches(
+            finding, changed, _expected_anchor_kind(finding, changed, require_anchor=True)
+        ):
+            reject("INVALID_CHANGED_FILE_ANCHOR", "grounding", finding, finding_index)
+            continue
         if finding.relation_to_change is None and finding.causal_evidence is not None:
             reject("CHANGE_RELATION_MISSING", "relation", finding, finding_index)
             continue
@@ -581,6 +599,7 @@ def validate_findings_with_diagnostics(
                     ),
                 )
             )
+    rejection_diagnostics.sort(key=lambda item: item.finding_index)
     return FindingValidationResult(
         findings=limited,
         changed_file_count=changed_file_count,

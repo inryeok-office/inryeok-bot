@@ -15,7 +15,7 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -91,6 +91,7 @@ _execution_lock = asyncio.Lock()
 # This set is retained as a fast path for the current process.  Durable
 # records below are the source of truth across executor restarts.
 _seen_execution_ids: set[str] = set()
+_process_counts: dict[str, int | None] = {}
 
 
 def _execution_state_root() -> Path:
@@ -103,6 +104,12 @@ def _request_fingerprint(request: ReviewRequest) -> str:
     # Never persist the archive or prompt themselves.  The digest prevents a
     # reused execution id from being silently associated with another request.
     digest = hashlib.sha256()
+    schema = Path(os.environ.get("CODEX_SCHEMA_PATH", "review-schema.json"))
+    try:
+        digest.update(hashlib.sha256(schema.read_bytes()).digest())
+    except OSError:
+        # Missing schema is not interchangeable with a verified schema.
+        digest.update(b"SCHEMA_UNAVAILABLE")
     for value in (
         request.archive,
         request.prompt,
@@ -182,7 +189,6 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/review", response_model=None)
 async def review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
     if request.model and request.model_verification_id is None and not request.verification_mode:
         return JSONResponse(
@@ -288,6 +294,7 @@ async def review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
                     "state": "FAILED_FINAL" if result.status_code < 500 else "FAILED_RETRYABLE",
                     "status_code": result.status_code,
                     "error": error,
+                    "process_count": _process_counts.pop(request.execution_id, None),
                 }
             )
         else:
@@ -297,6 +304,7 @@ async def review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
                     "request_fingerprint": request_hash,
                     "state": "SUCCEEDED",
                     "result": result,
+                    "process_count": _process_counts.pop(request.execution_id, None),
                 }
             )
         if not persisted:
@@ -310,6 +318,26 @@ async def review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
                 },
             )
         return result
+
+
+@app.post("/review", response_model=None)
+async def review_endpoint(
+    request: ReviewRequest,
+    response: Response,
+) -> dict[str, object] | JSONResponse:
+    prior = _read_execution_record(request.execution_id)
+    result = await review(request)
+    stored = _read_execution_record(request.execution_id)
+    count = stored.get("process_count") if stored else None
+    headers = {
+        "X-Codex-Process-Count": str(count) if count in (0, 1) else "UNKNOWN",
+        "X-Execution-Reused": "1" if prior is not None else "0",
+    }
+    if isinstance(result, JSONResponse):
+        result.headers.update(headers)
+    else:
+        response.headers.update(headers)
+    return result
 
 
 async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONResponse:
@@ -338,8 +366,9 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
             _install_managed_agents(workspace)
         except ValueError as exc:
             raise HTTPException(status_code=413, detail="unsafe executor input") from exc
+        runner = CodexRunner(settings)
         try:
-            output = await CodexRunner(settings).run(
+            output = await runner.run(
                 workspace,
                 request.prompt,
                 request.model,
@@ -350,6 +379,7 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
                 request.model_verification_id,
             )
         except CodexError as exc:
+            _process_counts[request.execution_id] = getattr(runner, "last_process_count", None)
             diagnostics = exc.safe_diagnostic
             diagnostic_failed = exc.diagnostic_extraction_failed
             if exc.code in {"CODEX_OUTPUT_SCHEMA_MISMATCH", "SCHEMA_ERROR"}:
@@ -384,6 +414,7 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
                 },
             )
         except Exception:
+            _process_counts[request.execution_id] = getattr(runner, "last_process_count", None)
             logger.warning(
                 "executor review failed correlation=%s "
                 "category=EXECUTOR_INTERNAL retryable=false stage=internal",
@@ -400,6 +431,7 @@ async def _run_review(request: ReviewRequest) -> dict[str, object] | JSONRespons
                     "error": "executor internal error",
                 },
             )
+        _process_counts[request.execution_id] = getattr(runner, "last_process_count", None)
         return output.model_dump(mode="json")
     finally:
         shutil.rmtree(workspace, ignore_errors=True)

@@ -105,6 +105,19 @@ def parse_unified_diff(
     return result
 
 
+def filter_unified_diff(text: str, paths: set[str]) -> str:
+    """Keep complete hunks only for the reviewed changed-file manifest."""
+    included = False
+    result: list[str] = []
+    for line in text.splitlines(keepends=True):
+        header = DIFF_HEADER.match(line.rstrip("\r\n"))
+        if header:
+            included = normalize_path(header.group(2)) in paths
+        if included:
+            result.append(line)
+    return "".join(result)
+
+
 async def _git(
     args: list[str],
     cwd: Path,

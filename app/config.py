@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     worker_max_attempts: int = Field(3, ge=1, le=10)
     max_pending_jobs: int = Field(100, ge=1, le=10_000)
     max_repository_pending_jobs: int = Field(10, ge=1, le=1_000)
+    selective_multi_pass: bool = False
+    review_max_passes: int = Field(2, ge=1, le=3)
+    review_pass_timeout_seconds: int = Field(900, ge=30, le=3600)
+    review_processes_per_hour: int = Field(20, ge=1, le=1000)
+    review_processes_per_day: int = Field(100, ge=1, le=10000)
+    review_global_concurrency: int = Field(1, ge=1, le=10)
+    review_repository_concurrency: int = Field(1, ge=1, le=5)
     stale_running_seconds: int = Field(1800, ge=60)
     codex_model_allowlist: str = ""
     # JSON is deliberately operator-managed rather than scraped from an

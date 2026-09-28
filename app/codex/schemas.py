@@ -104,6 +104,8 @@ class Finding(BaseModel):
     changed_symbol: str | None = Field(default=None, max_length=300)
     causal_evidence: str | None = Field(default=None, max_length=1200)
     changed_file_anchor: ChangedFileAnchor | None = None
+    defect_identity: str | None = Field(default=None, max_length=128, pattern=r"^[a-z][a-z0-9_]+$")
+    causal_chain: list[str] | None = Field(default=None, min_length=3, max_length=3)
 
     @model_validator(mode="before")
     @classmethod

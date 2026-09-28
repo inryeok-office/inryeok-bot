@@ -1,6 +1,7 @@
 """Client for the isolated Codex executor service."""
 
 import base64
+import gzip
 import io
 import tarfile
 from pathlib import Path
@@ -25,9 +26,14 @@ def _archive_workspace(checkout: Path) -> bytes:
     """Create a safe, source-only archive without .git or symlinks."""
     root = checkout.resolve()
     output = io.BytesIO()
-    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+    # Byte-stable archives make durable result reuse independent of checkout
+    # timestamps, owner IDs and the wall-clock time of gzip creation.
+    with (
+        gzip.GzipFile(fileobj=output, mode="wb", mtime=0) as compressed,
+        tarfile.open(fileobj=compressed, mode="w") as archive,
+    ):
         count = 0
-        for candidate in root.rglob("*"):
+        for candidate in sorted(root.rglob("*")):
             relative = candidate.relative_to(root)
             if ".git" in relative.parts:
                 continue
@@ -38,7 +44,12 @@ def _archive_workspace(checkout: Path) -> bytes:
             count += 1
             if count > MAX_ARCHIVE_FILES:
                 raise CodexError("EXECUTOR_INPUT_LIMIT", "workspace file limit exceeded")
-            archive.add(candidate, arcname=relative.as_posix(), recursive=False)
+            info = archive.gettarinfo(str(candidate), arcname=relative.as_posix())
+            info.mtime = info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            info.mode = 0o644
+            with candidate.open("rb") as source:
+                archive.addfile(info, source)
     payload = output.getvalue()
     if len(payload) > MAX_ARCHIVE_BYTES:
         raise CodexError("EXECUTOR_INPUT_LIMIT", "workspace archive is too large")
@@ -49,6 +60,7 @@ class ExecutorRunner(ReviewRunner):
     def __init__(self, url: str, timeout: float = 960.0) -> None:
         self.url = url.rstrip("/")
         self.timeout = timeout
+        self.last_process_count: int | None = None
 
     async def run(
         self,
@@ -62,6 +74,7 @@ class ExecutorRunner(ReviewRunner):
         model_verification_id: str | None = None,
         verification_mode: bool = False,
     ) -> ReviewOutput:
+        self.last_process_count = None
         archive = _archive_workspace(checkout)
         payload = {
             "archive": base64.b64encode(archive).decode("ascii"),
@@ -107,6 +120,8 @@ class ExecutorRunner(ReviewRunner):
             )
             error.stage = "executor_transport"
             raise error from exc
+        count = getattr(response, "headers", {}).get("X-Codex-Process-Count")
+        self.last_process_count = int(count) if count in ("0", "1") else None
         if response.status_code >= 400:
             body: dict[str, object] = {}
             try:
@@ -123,6 +138,7 @@ class ExecutorRunner(ReviewRunner):
                 signature=str(body.get("matched_safe_signature", error_code)),
             )
             raw_exit_code = body.get("exit_code")
+            codex_error.process_count = self.last_process_count
             if isinstance(raw_exit_code, int):
                 codex_error.exit_code = raw_exit_code
             raw_stderr_length = body.get("stderr_byte_length")

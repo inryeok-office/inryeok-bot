@@ -34,6 +34,7 @@ from app.jobs.models import (
     ReviewDomain,
     ReviewFindingDiagnostic,
     ReviewJob,
+    ReviewPass,
     ReviewRun,
 )
 from app.jobs.repository import JobRepository
@@ -297,6 +298,11 @@ async def job_detail(
             settings,
             job=job,
             review_run=review_run,
+            review_passes=(
+                await session.scalars(
+                    select(ReviewPass).where(ReviewPass.job_id == job.id).order_by(ReviewPass.id)
+                )
+            ).all(),
             rejection_counts=rejection_counts,
             rejection_diagnostics=rejection_diagnostics,
             outcome_code=outcome_code,

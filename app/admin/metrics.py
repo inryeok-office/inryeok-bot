@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.jobs.models import JobStatus, ReviewJob, ReviewRun
+from app.jobs.models import JobStatus, ReviewJob, ReviewPass, ReviewRun
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,10 @@ class UsageMetrics:
     published_findings: int
     rejected_findings: int
     summary_fallbacks: int
+    codex_processes: int
+    unknown_process_counts: int
+    process_reservations: int
+    partial_reviews: int
 
 
 def _percentile(values: list[float], percentile: float) -> float | None:
@@ -123,8 +127,12 @@ async def usage_metrics(session: AsyncSession, period_days: int = 1) -> UsageMet
     # The current schema stores summary fallback as a rejection reason.  Keep
     # this conservative: unknown/missing data is not counted as a fallback.
     fallback = sum(
-        1 for run in runs if run.rejection_counts and "SUMMARY_FALLBACK" in run.rejection_counts
+        1
+        for run in runs
+        if run.publisher_fallback
+        or (run.rejection_counts and "SUMMARY_FALLBACK" in run.rejection_counts)
     )
+    passes = (await session.scalars(select(ReviewPass).where(ReviewPass.started_at >= since))).all()
 
     def row_sort(item: tuple[str, int]) -> tuple[int, str]:
         return (-item[1], item[0])
@@ -165,4 +173,10 @@ async def usage_metrics(session: AsyncSession, period_days: int = 1) -> UsageMet
         published_findings=published,
         rejected_findings=rejected,
         summary_fallbacks=fallback,
+        codex_processes=sum(item.process_count or 0 for item in passes),
+        unknown_process_counts=sum(
+            item.process_count is None and item.state != "SKIPPED" for item in passes
+        ),
+        process_reservations=sum(item.state != "SKIPPED" for item in passes),
+        partial_reviews=sum(bool(run.partial_review) for run in runs),
     )

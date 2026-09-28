@@ -207,7 +207,9 @@ async def run_worker() -> None:
     while not stop.is_set():
         async with get_session_factory()() as session:
             repository = JobRepository(session)
-            job = await repository.claim_next()
+            job = await repository.claim_next(
+                settings.review_global_concurrency, settings.review_repository_concurrency
+            )
             if not job:
                 try:
                     await asyncio.wait_for(stop.wait(), settings.worker_poll_seconds)

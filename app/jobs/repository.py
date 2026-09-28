@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import Select, exists, false, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.jobs.models import (
@@ -20,7 +21,10 @@ class QueueCapacityError(RuntimeError):
     """The bounded database queue cannot accept another job right now."""
 
 
-def claim_statement() -> Select[tuple[ReviewJob]]:
+def claim_statement(
+    global_limit: int | None = None,
+    repository_limit: int | None = None,
+) -> Select[tuple[ReviewJob]]:
     repository_match = (
         (RepositorySettings.installation_id == ReviewJob.installation_id)
         & (
@@ -75,6 +79,30 @@ def claim_statement() -> Select[tuple[ReviewJob]]:
             ),
         )
     )
+    running = aliased(ReviewJob)
+    limits: list[ColumnElement[bool]] = []
+    if global_limit is not None:
+        limits.append(
+            select(func.count())
+            .select_from(running)
+            .where(running.status == JobStatus.RUNNING)
+            .scalar_subquery()
+            < global_limit
+        )
+    if repository_limit is not None:
+        limits.append(
+            select(func.count())
+            .select_from(running)
+            .where(
+                running.status == JobStatus.RUNNING,
+                running.installation_id == ReviewJob.installation_id,
+                running.repository_owner == ReviewJob.repository_owner,
+                running.repository_name == ReviewJob.repository_name,
+            )
+            .correlate(ReviewJob)
+            .scalar_subquery()
+            < repository_limit
+        )
     return (
         select(ReviewJob)
         .where(
@@ -92,6 +120,7 @@ def claim_statement() -> Select[tuple[ReviewJob]]:
             # installation/access trust boundary after a partial webhook or
             # database restore.
             repository_eligible,
+            *limits,
         )
         .order_by(ReviewJob.created_at, ReviewJob.id)
         .with_for_update(skip_locked=True)
@@ -209,8 +238,16 @@ class JobRepository:
             existing = await self.session.scalar(select(ReviewJob).where(or_(*conditions)))
             return existing, False
 
-    async def claim_next(self) -> ReviewJob | None:
-        job = await self.session.scalar(claim_statement())
+    async def claim_next(
+        self,
+        global_limit: int | None = None,
+        repository_limit: int | None = None,
+    ) -> ReviewJob | None:
+        if global_limit is not None:
+            await self.session.scalar(
+                select(GlobalReviewSettings).where(GlobalReviewSettings.id == 1).with_for_update()
+            )
+        job = await self.session.scalar(claim_statement(global_limit, repository_limit))
         if job is None:
             return None
         job.status = JobStatus.RUNNING

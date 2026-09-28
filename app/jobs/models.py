@@ -377,6 +377,7 @@ class ReviewRun(Base):
     stage_counts: Mapped[dict[str, int] | None] = mapped_column(JSON)
     publisher_fallback: Mapped[bool | None] = mapped_column(Boolean)
     duplicate_only: Mapped[bool | None] = mapped_column(Boolean)
+    partial_review: Mapped[bool | None] = mapped_column(Boolean)
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("review_jobs.id", ondelete="CASCADE"))
     base_sha: Mapped[str] = mapped_column(String(64))
@@ -442,6 +443,10 @@ class ReviewFindingDiagnostic(Base):
         Index("ix_review_finding_diagnostics_run", "review_run_id"),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
+    pass_type: Mapped[str | None] = mapped_column(String(32))
+    dedup_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    path_present: Mapped[bool | None] = mapped_column(Boolean)
+    line_present: Mapped[bool | None] = mapped_column(Boolean)
     job_id: Mapped[int] = mapped_column(ForeignKey("review_jobs.id", ondelete="CASCADE"))
     review_run_id: Mapped[int] = mapped_column(ForeignKey("review_runs.id", ondelete="CASCADE"))
     finding_index: Mapped[int] = mapped_column(Integer)
@@ -461,6 +466,38 @@ class ReviewFindingDiagnostic(Base):
     diagnostic_schema_version: Mapped[str] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     review_run: Mapped[ReviewRun] = relationship(back_populates="rejection_diagnostics")
+
+
+class ReviewPass(Base):
+    """One durable, content-free process reservation per job and perspective."""
+
+    __tablename__ = "review_passes"
+    __table_args__ = (
+        UniqueConstraint("job_id", "pass_type", name="uq_review_pass_job_type"),
+        CheckConstraint(
+            "state IN ('RESERVED','SUCCEEDED','FAILED','UNKNOWN','SKIPPED')",
+            name="ck_review_pass_state",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("review_jobs.id", ondelete="CASCADE"), index=True
+    )
+    pass_type: Mapped[str] = mapped_column(String(32))
+    execution_id: Mapped[str] = mapped_column(String(64), unique=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str | None] = mapped_column(String(128))
+    effort: Mapped[str] = mapped_column(String(16))
+    state: Mapped[str] = mapped_column(String(16))
+    reason: Mapped[str | None] = mapped_column(String(64))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    raw_count: Mapped[int | None] = mapped_column(Integer)
+    accepted_count: Mapped[int | None] = mapped_column(Integer)
+    rejected_count: Mapped[int | None] = mapped_column(Integer)
+    contribution_count: Mapped[int | None] = mapped_column(Integer)
+    process_count: Mapped[int | None] = mapped_column(Integer)
+    timeout_seconds: Mapped[int] = mapped_column(Integer)
 
 
 class ReviewFailureNotice(Base):

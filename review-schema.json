@@ -10,7 +10,7 @@
       "type": "array", "maxItems": 100,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["scope", "path", "line", "side", "category", "severity", "confidence", "title", "body", "condition", "impact", "evidence", "suggested_fix", "domain", "relation_to_change", "introduced_by_pr", "changed_symbol", "causal_evidence", "changed_file_anchor"],
+        "required": ["scope", "path", "line", "side", "category", "severity", "confidence", "title", "body", "condition", "impact", "evidence", "suggested_fix", "domain", "relation_to_change", "introduced_by_pr", "changed_symbol", "causal_evidence", "changed_file_anchor", "defect_identity", "causal_chain"],
         "properties": {
           "scope": {"type": "string", "enum": ["LINE", "FILE", "PR"]},
           "path": {"type": ["string", "null"], "maxLength": 1024},
@@ -30,6 +30,8 @@
           "introduced_by_pr": {"type": ["boolean", "null"]},
           "changed_symbol": {"type": ["string", "null"], "maxLength": 300},
           "causal_evidence": {"type": ["string", "null"], "maxLength": 1200},
+          "defect_identity": {"type": ["string", "null"], "maxLength": 128},
+          "causal_chain": {"type": ["array", "null"], "minItems": 3, "maxItems": 3, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
           "changed_file_anchor": {
             "type": ["object", "null"],
             "additionalProperties": false,

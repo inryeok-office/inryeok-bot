@@ -42,9 +42,11 @@ async def _seed(factory: object) -> None:
         JobStatus,
         RepositorySettings,
         ReviewJob,
+        ReviewPass,
         ReviewRun,
         TriggerType,
     )
+    from app.review.passes import GENERAL
 
     assert isinstance(factory, async_sessionmaker)
     now = datetime.now(UTC).replace(microsecond=0)
@@ -146,6 +148,38 @@ async def _seed(factory: object) -> None:
             correlation_id="corr-fixture-failed-1234567890abcdef1234567890",
         )
         session.add_all([success, failed])
+        success.context_manifest = {
+            "version": "1",
+            "changed_files": 2,
+            "prompt_files": 2,
+            "archive_files": 4,
+            "ignored_files": 0,
+            "binary_files": 0,
+            "diff_bytes": 2048,
+            "prompt_diff_bytes": 2048,
+            "truncated": False,
+            "risk_signals": ["SECURITY", "LOGGING"],
+            "related_paths": ["config/logging.xml"],
+        }
+        session.add(
+            ReviewPass(
+                job_id=1,
+                pass_type=GENERAL,
+                execution_id="fixture-general-1",
+                fingerprint="f" * 64,
+                model=None,
+                effort="medium",
+                state="SUCCEEDED",
+                started_at=now - timedelta(hours=2),
+                duration_ms=1000,
+                raw_count=2,
+                accepted_count=1,
+                rejected_count=1,
+                contribution_count=1,
+                process_count=1,
+                timeout_seconds=900,
+            )
+        )
         session.add(
             ReviewRun(
                 id=1,
