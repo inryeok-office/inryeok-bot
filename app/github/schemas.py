@@ -21,6 +21,8 @@ class Ref(GitHubModel):
 
 class PullRequest(GitHubModel):
     number: int
+    state: str = "open"
+    merged: bool = False
     draft: bool = False
     base: Ref
     head: Ref

@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,12 +16,14 @@ from app.github.client import GitHubAPIError, GitHubClient
 from app.jobs.models import (
     FindingRecord,
     GlobalReviewSettings,
+    JobStatus,
     RepositorySettings,
     ReviewFindingDiagnostic,
     ReviewJob,
     ReviewRun,
     TriggerType,
 )
+from app.jobs.repository import JobRepository
 from app.review.context import ContextBudget, select_context
 from app.review.deduplicator import fingerprint
 from app.review.diagnostics import StageCounts, context_manifest
@@ -111,6 +114,88 @@ class ReviewService:
         effective = resolve(global_settings, config, self.github.settings, catalog=model_catalog)
         if not effective.enabled:
             raise ReviewSkipped("repository is disabled")
+        if job.trigger_action == "synchronize":
+            if not effective.auto_review_enabled or not effective.review_on_synchronize:
+                raise ReviewSkipped("synchronize policy is disabled", "SYNCHRONIZE_DISABLED")
+            pr = await self.github.get_pull_request(
+                job.installation_id,
+                job.repository_owner,
+                job.repository_name,
+                job.pull_request_number,
+            )
+            if pr.get("state") != "open" or pr.get("merged") or pr.get("draft"):
+                raise ReviewSkipped("pull request is not reviewable", "PR_NOT_REVIEWABLE")
+            latest_head = str(pr["head"]["sha"])
+            if latest_head != job.head_sha:
+                latest_spec = spec_for(self.github.settings, effective.model, model_catalog)
+                latest, _ = await JobRepository(self.session).enqueue(
+                    max_pending_jobs=self.github.settings.max_pending_jobs,
+                    max_repository_pending_jobs=self.github.settings.max_repository_pending_jobs,
+                    delivery_id="stale-" + uuid4().hex,
+                    installation_id=job.installation_id,
+                    repository_owner=job.repository_owner,
+                    repository_name=job.repository_name,
+                    pull_request_number=job.pull_request_number,
+                    base_sha=str(pr["base"]["sha"]),
+                    head_sha=latest_head,
+                    trigger_type=TriggerType.AUTO,
+                    trigger_action="synchronize",
+                    model=effective.model,
+                    reasoning_effort=effective.reasoning_effort,
+                    model_source=(
+                        "REPOSITORY_OVERRIDE"
+                        if config.override_model is not None
+                        else "GLOBAL_DEFAULT"
+                        if effective.model is not None
+                        else CLI_DEFAULT
+                    ),
+                    reasoning_source=(
+                        "REPOSITORY_OVERRIDE"
+                        if config.override_reasoning_effort is not None
+                        else "GLOBAL_DEFAULT"
+                    ),
+                    model_catalog_version=await db_catalog_version(self.session),
+                    model_verification_id=(
+                        (latest_spec.verification_id or latest_spec.version)
+                        if latest_spec is not None
+                        else None
+                    ),
+                    not_before=datetime.now(UTC)
+                    + timedelta(seconds=effective.synchronize_debounce_seconds),
+                )
+                job.superseded_by_head_sha = latest.head_sha if latest else latest_head
+                await self.session.commit()
+                raise ReviewSkipped("newer head queued before execution", "STALE_HEAD")
+            same_head = await self.session.scalar(
+                select(ReviewJob.id)
+                .where(
+                    ReviewJob.installation_id == job.installation_id,
+                    ReviewJob.repository_owner == job.repository_owner,
+                    ReviewJob.repository_name == job.repository_name,
+                    ReviewJob.pull_request_number == job.pull_request_number,
+                    ReviewJob.head_sha == job.head_sha,
+                    ReviewJob.status == JobStatus.SUCCEEDED,
+                    ReviewJob.id != job.id,
+                )
+                .limit(1)
+            )
+            if same_head is not None:
+                raise ReviewSkipped("head already reviewed", "ALREADY_REVIEWED_CURRENT_HEAD")
+            previous = await self.session.scalar(
+                select(ReviewJob)
+                .join(ReviewRun)
+                .where(
+                    ReviewJob.installation_id == job.installation_id,
+                    ReviewJob.repository_owner == job.repository_owner,
+                    ReviewJob.repository_name == job.repository_name,
+                    ReviewJob.pull_request_number == job.pull_request_number,
+                    ReviewJob.status == JobStatus.SUCCEEDED,
+                    ReviewJob.head_sha != job.head_sha,
+                )
+                .order_by(ReviewJob.finished_at.desc(), ReviewJob.id.desc())
+                .limit(1)
+            )
+            job.previous_reviewed_head = previous.head_sha if previous else None
         # New jobs carry their effective model/effort from enqueue time. Do
         # not silently change an in-flight job when policy is edited later.
         if job.model_source is not None or job.reasoning_source is not None:
@@ -202,6 +287,12 @@ class ReviewService:
         )
         async with manager as checkout:
             changed = await manager.fetch_and_diff(job.base_sha, job.head_sha, patterns)
+            incremental = ""
+            if job.previous_reviewed_head:
+                incremental = await manager.incremental_diff(
+                    job.previous_reviewed_head, job.head_sha
+                )
+                job.incremental_diff_bytes = len(incremental.encode("utf-8"))
             job.context_manifest = context_manifest(
                 checkout, manager.diff_text, list(changed)
             ).model_dump()
@@ -257,8 +348,18 @@ class ReviewService:
                     "risk_signals": signals,
                 },
                 manager.diff_text,
-                related_context=pack.render(),
+                related_context=(
+                    "Prior reviewed head: "
+                    + (job.previous_reviewed_head or "UNKNOWN")
+                    + "\nPrioritize new changes below; full PR diff governs grounding. "
+                    "A missing prior finding means not detected, not proven fixed.\n"
+                    + "<untrusted-incremental-diff>\n"
+                    + incremental
+                    + "\n</untrusted-incremental-diff>\n"
+                    + pack.render()
+                ),
             )
+            await self.session.commit()
             output = await self.runner.run(
                 checkout,
                 prompt,
@@ -279,11 +380,38 @@ class ReviewService:
                         ReviewJob.repository_owner == job.repository_owner,
                         ReviewJob.repository_name == job.repository_name,
                         ReviewJob.pull_request_number == job.pull_request_number,
-                        ReviewJob.head_sha == job.head_sha,
+                        (
+                            ReviewRun.github_review_id.is_not(None)
+                            if job.trigger_action == "synchronize"
+                            else ReviewJob.head_sha == job.head_sha
+                        ),
                     )
                 )
             ).all()
         )
+        if job.trigger_action == "synchronize":
+            prior_indexes = (
+                await self.session.scalars(
+                    select(ReviewRun.published_finding_fingerprints)
+                    .join(ReviewJob)
+                    .where(
+                        ReviewJob.installation_id == job.installation_id,
+                        ReviewJob.repository_owner == job.repository_owner,
+                        ReviewJob.repository_name == job.repository_name,
+                        ReviewJob.pull_request_number == job.pull_request_number,
+                        ReviewRun.github_review_id.is_not(None),
+                    )
+                )
+            ).all()
+            for index in prior_indexes:
+                if index is None:
+                    continue
+                stored = json.loads(index)
+                if not isinstance(stored, list) or any(
+                    not isinstance(value, str) or len(value) != 64 for value in stored
+                ):
+                    raise ValueError("invalid published fingerprint index")
+                existing.update(stored)
         validation = validate_findings_with_diagnostics(
             output.findings,
             changed,
@@ -353,6 +481,9 @@ class ReviewService:
             "not_detected": len(prior_fingerprints - published_fingerprints),
         }
         run = ReviewRun(
+            duplicate_only=bool(output.findings)
+            and not findings
+            and validation.rejection_counts == {"DUPLICATE": len(output.findings)},
             stage_counts=counts.model_dump(),
             publisher_fallback=False,
             job_id=job.id,
@@ -423,7 +554,7 @@ class ReviewService:
                 )
                 .limit(1)
             )
-        if previous_auto_summary is None:
+        if previous_auto_summary is None and not run.duplicate_only:
             marker = review_marker(
                 job.repository_owner,
                 job.repository_name,

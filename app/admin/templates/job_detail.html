@@ -2,6 +2,9 @@
 {% from "_macros.html" import status, trigger_label, profile_label %}
 {% block title %}리뷰 작업 #{{ job.id }}{% endblock %}
 {% block content %}
+{% if job.trigger_action == 'synchronize' %}
+<section class="card section"><details><summary>새 head 증분 검토</summary><dl class="details compact-details"><dt>이전 검토 head</dt><dd><code>{{ job.previous_reviewed_head or '없음' }}</code></dd><dt>추가 diff bytes</dt><dd>{{ job.incremental_diff_bytes if job.incremental_diff_bytes is not none else '기록 없음' }}</dd><dt>중복만 발견</dt><dd>{{ review_run.duplicate_only if review_run else '검토 전' }}</dd></dl></details></section>
+{% endif %}
 {% if job.context_manifest or (review_run and review_run.stage_counts) %}
 <section class="card section"><details{% if review_run and review_run.publisher_fallback %} open{% endif %}><summary>리뷰 context · canonical pipeline 진단</summary>
 {% if job.context_manifest %}<dl class="details compact-details">{% for key, value in job.context_manifest.items() %}<dt>{{ key }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>{% endif %}

@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, exists, func, or_, select, update
+from sqlalchemy import Select, exists, false, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.jobs.models import (
+    AdminAuditLog,
     GlobalReviewSettings,
     JobStatus,
     RepositorySettings,
@@ -107,11 +109,38 @@ class JobRepository:
         max_repository_pending_jobs: int | None = None,
         **values: object,
     ) -> tuple[ReviewJob | None, bool]:
+        # Serialize queue admission in production using the existing singleton.
+        await self.session.scalar(
+            select(GlobalReviewSettings).where(GlobalReviewSettings.id == 1).with_for_update()
+        )
+        superseded: ColumnElement[bool] = false()
+        if values["trigger_type"] == TriggerType.AUTO:
+            existing_auto = await self.session.scalar(
+                select(ReviewJob).where(
+                    ReviewJob.installation_id == values["installation_id"],
+                    ReviewJob.repository_owner == values["repository_owner"],
+                    ReviewJob.repository_name == values["repository_name"],
+                    ReviewJob.pull_request_number == values["pull_request_number"],
+                    ReviewJob.head_sha == values["head_sha"],
+                    ReviewJob.trigger_type == TriggerType.AUTO,
+                )
+            )
+            if existing_auto is not None:
+                return existing_auto, False
+            superseded = (
+                (ReviewJob.status == JobStatus.PENDING)
+                & (ReviewJob.trigger_type == TriggerType.AUTO)
+                & (ReviewJob.installation_id == values["installation_id"])
+                & (ReviewJob.repository_owner == values["repository_owner"])
+                & (ReviewJob.repository_name == values["repository_name"])
+                & (ReviewJob.pull_request_number == values["pull_request_number"])
+                & (ReviewJob.head_sha != values["head_sha"])
+            )
         if max_pending_jobs is not None:
             pending = await self.session.scalar(
                 select(func.count())
                 .select_from(ReviewJob)
-                .where(ReviewJob.status == JobStatus.PENDING)
+                .where(ReviewJob.status == JobStatus.PENDING, ~superseded)
             )
             if int(pending or 0) >= max_pending_jobs:
                 raise QueueCapacityError("review queue capacity reached")
@@ -121,6 +150,7 @@ class JobRepository:
                 .select_from(ReviewJob)
                 .where(
                     ReviewJob.status == JobStatus.PENDING,
+                    ~superseded,
                     ReviewJob.repository_owner == values["repository_owner"],
                     ReviewJob.repository_name == values["repository_name"],
                 )
@@ -131,10 +161,13 @@ class JobRepository:
         self.session.add(job)
         try:
             if values["trigger_type"] == TriggerType.AUTO:
+                old_ids = (await self.session.scalars(select(ReviewJob.id).where(superseded))).all()
                 await self.session.execute(
                     update(ReviewJob)
                     .where(
                         ReviewJob.status == JobStatus.PENDING,
+                        ReviewJob.trigger_type == TriggerType.AUTO,
+                        ReviewJob.installation_id == values["installation_id"],
                         ReviewJob.repository_owner == values["repository_owner"],
                         ReviewJob.repository_name == values["repository_name"],
                         ReviewJob.pull_request_number == values["pull_request_number"],
@@ -148,6 +181,16 @@ class JobRepository:
                         finished_at=datetime.now(UTC),
                     )
                 )
+                for old_id in old_ids:
+                    self.session.add(
+                        AdminAuditLog(
+                            actor_login="system:webhook",
+                            action="SUPERSEDE_PENDING_HEAD",
+                            target_type="review_job",
+                            target_id=str(old_id),
+                            summary="New head: " + str(values["head_sha"]),
+                        )
+                    )
             await self.session.commit()
             await self.session.refresh(job)
             return job, True

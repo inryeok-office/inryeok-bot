@@ -408,6 +408,19 @@ async def github_webhook(
                 return await ignored("repository_disabled")
             if not _trigger_enabled(pr_event.action, effective):
                 return await ignored("trigger_disabled")
+            if pr_event.pull_request.state != "open" or pr_event.pull_request.merged:
+                return await ignored("closed_or_merged")
+            if pr_event.action == "synchronize":
+                current = await github.get_pull_request(
+                    pr_event.installation.id,
+                    repo_settings.repository_owner,
+                    repo_settings.repository_name,
+                    pr_event.pull_request.number,
+                )
+                if current.get("state") != "open" or current.get("merged") or current.get("draft"):
+                    return await ignored("closed_merged_or_draft")
+                if current["head"]["sha"] != pr_event.pull_request.head.sha:
+                    return await ignored("stale_synchronize_event")
             if pr_event.pull_request.draft and repo_settings.ignore_draft:
                 return await ignored("draft")
             installation_id = pr_event.installation.id
@@ -579,6 +592,7 @@ async def github_webhook(
                 base_sha=base_sha,
                 head_sha=head_sha,
                 trigger_type=trigger,
+                trigger_action=(pr_event.action if x_github_event == "pull_request" else "command"),
                 source_comment_id=source_comment_id,
                 not_before=not_before,
                 model=effective.model,

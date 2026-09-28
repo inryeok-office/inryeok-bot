@@ -227,3 +227,32 @@ class RepositoryCheckout:
     async def __aexit__(self, *_: object) -> None:
         if self.path:
             shutil.rmtree(self.path, ignore_errors=True)
+
+    async def incremental_diff(self, previous: str, head: str) -> str:
+        assert self.path
+        if not all(re.fullmatch(r"[0-9a-fA-F]{40,64}", sha) for sha in (previous, head)):
+            raise DiffError("invalid incremental SHA")
+        env = os.environ.copy()
+        env.update(
+            {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": f"http.{self.settings.github_clone_base_url}/.extraheader",
+                "GIT_CONFIG_VALUE_0": _git_authorization_header(self.token),
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+            }
+        )
+        await _git(
+            ["fetch", "--no-tags", "origin", previous],
+            self.path,
+            self.settings.git_timeout_seconds,
+            env,
+        )
+        return await _git(
+            ["diff", "--no-ext-diff", "--unified=0", f"{previous}..{head}", "--"],
+            self.path,
+            self.settings.git_timeout_seconds,
+            env,
+            max_bytes=self.settings.max_diff_bytes,
+        )

@@ -53,9 +53,10 @@ class FakeGitHub:
 class FakeCheckout:
     diff_arguments: tuple[object, ...] = ()
     diff_text = "diff --git a/app.py b/app.py\n@@ -1 +1 @@\n-old\n+new"
+    root = Path(".")
 
     def __init__(self, *_: object) -> None:
-        self.path = Path(".")
+        self.path = type(self).root
 
     async def __aenter__(self) -> Path:
         return self.path
@@ -66,6 +67,15 @@ class FakeCheckout:
 
     async def __aexit__(self, *_: object) -> None:
         pass
+
+    async def incremental_diff(self, previous: str, head: str) -> str:
+        return self.diff_text
+
+
+@pytest.fixture(autouse=True)
+def isolated_checkout(tmp_path, monkeypatch):
+    (tmp_path / "app.py").write_text("new\n", encoding="utf-8")
+    monkeypatch.setattr(FakeCheckout, "root", tmp_path)
 
 
 def test_github_published_identifier_columns_are_bigint() -> None:

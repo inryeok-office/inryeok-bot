@@ -117,6 +117,9 @@ class GitHubInstallation(Base):
 class ReviewJob(Base):
     __tablename__ = "review_jobs"
     context_manifest: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    trigger_action: Mapped[str | None] = mapped_column(String(32))
+    previous_reviewed_head: Mapped[str | None] = mapped_column(String(64))
+    incremental_diff_bytes: Mapped[int | None] = mapped_column(Integer)
     __table_args__ = (
         UniqueConstraint("delivery_id"),
         UniqueConstraint("source_comment_id", name="uq_review_jobs_source_comment_id"),
@@ -373,6 +376,7 @@ class ReviewRun(Base):
     __tablename__ = "review_runs"
     stage_counts: Mapped[dict[str, int] | None] = mapped_column(JSON)
     publisher_fallback: Mapped[bool | None] = mapped_column(Boolean)
+    duplicate_only: Mapped[bool | None] = mapped_column(Boolean)
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("review_jobs.id", ondelete="CASCADE"))
     base_sha: Mapped[str] = mapped_column(String(64))
