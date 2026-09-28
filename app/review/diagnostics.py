@@ -1,6 +1,5 @@
 """Content-free, versioned metadata for new review executions."""
 
-import re
 from pathlib import Path
 from typing import Literal
 
@@ -36,7 +35,9 @@ class ContextManifest(BaseModel):
     @field_validator("risk_signals")
     @classmethod
     def safe_signals(cls, values: list[str]) -> list[str]:
-        if any(not re.fullmatch(r"[A-Z_]{2,32}", value) for value in values):
+        from app.review.risks import SIGNALS
+
+        if any(value not in SIGNALS for value in values):
             raise ValueError("unsupported risk signal")
         return values
 

@@ -21,12 +21,14 @@ from app.jobs.models import (
     ReviewRun,
     TriggerType,
 )
+from app.review.context import ContextBudget, select_context
 from app.review.deduplicator import fingerprint
 from app.review.diagnostics import StageCounts, context_manifest
 from app.review.diff import RepositoryCheckout
 from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
 from app.review.model_catalog import CLI_DEFAULT, db_catalog_version, load_db_catalog, spec_for
 from app.review.publisher import build_review_payload, review_marker
+from app.review.risks import detect_risks
 from app.review.settings import EffectiveReviewSettings, resolve
 from app.review.validator import FindingRejectionDiagnostic, validate_findings_with_diagnostics
 
@@ -203,6 +205,30 @@ class ReviewService:
             job.context_manifest = context_manifest(
                 checkout, manager.diff_text, list(changed)
             ).model_dump()
+            signals = detect_risks(manager.diff_text)
+            pack = select_context(
+                checkout,
+                list(changed),
+                manager.diff_text,
+                signals,
+                patterns,
+                ContextBudget(
+                    max_files=self.github.settings.context_max_files,
+                    per_file_bytes=self.github.settings.context_file_bytes,
+                    total_bytes=self.github.settings.context_total_bytes,
+                ),
+            )
+            job.context_manifest = {
+                **job.context_manifest,
+                "risk_signals": list(signals),
+                "related_paths": [item.path for item in pack.files],
+                "config_files": sum(item.role == "CONFIG" for item in pack.files),
+                "test_files": sum(item.role == "TEST" for item in pack.files),
+                "caller_callee_files": sum(item.role == "CALLER_CALLEE" for item in pack.files),
+                "truncated": pack.truncated,
+                "truncation_reasons": list(pack.reasons),
+                "size_excluded_files": pack.excluded_size,
+            }
             detection = detect_domains(list(changed))
             domains = effective_domains(
                 effective.review_domain_mode, effective.manual_review_domains, detection
@@ -228,8 +254,10 @@ class ReviewService:
                     "review_domains": domains,
                     "prompt_version": PROMPT_VERSION,
                     "ignore_patterns": patterns,
+                    "risk_signals": signals,
                 },
                 manager.diff_text,
+                related_context=pack.render(),
             )
             output = await self.runner.run(
                 checkout,

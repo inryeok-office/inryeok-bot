@@ -39,7 +39,7 @@
       "id": "root_cause_lost_by_truncation",
       "path": "src/main/java/team/washer/server/v2/global/thirdparty/aws/cloudwatch/appender/CloudWatchAppender.java",
       "symbol": "escapeAndTruncate",
-      "category": "EXCEPTION_HANDLING",
+      "category": "ERROR_HANDLING",
       "causal_chain": [
         "outer stack",
         "cause",
