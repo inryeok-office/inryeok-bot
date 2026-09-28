@@ -17,7 +17,26 @@
     "src/test/java/team/washer/server/v2/domain/user/repository/UserRepositoryFcmTokenTest.java"
   ],
   "head_timing": "INITIAL",
-  "expected": [],
+  "expected": [
+    {
+      "id": "bulk_update_bypasses_version",
+      "path": "src/main/java/team/washer/server/v2/domain/user/repository/UserRepository.java",
+      "symbol": "clearFcmTokenIfMatches",
+      "category": "DATA_INTEGRITY",
+      "causal_chain": ["stale_user_loaded", "bulk_update_bypasses_version", "invalid_token_restored"],
+      "severities": ["MEDIUM", "HIGH"],
+      "scope": "FILE",
+      "relation_to_change": "DIRECT_CHANGE",
+      "required_changed_file_anchor": true,
+      "required_causal_evidence": true,
+      "introduced_head": "3bbf0df6baae704f7e097924e49bfe59eb558875",
+      "first_reported_head": "6e740337cdc8c2dd964960a79bd3a1d23e09b348",
+      "fix_commit": "34a97a087d8bf834ca6ab9032d9b9d974d420d2c",
+      "human_accepted": true,
+      "initial_head_present": true,
+      "follow_up_only": false
+    }
+  ],
   "allowed": [
     "outer_persistence_context_stale_token"
   ],
@@ -27,7 +46,7 @@
   ],
   "follow_up": [
     {
-      "id": "bulk_update_bypasses_version",
+      "id": "after_commit_unchecked_exception",
       "introduced_head": "6e740337cdc8c2dd964960a79bd3a1d23e09b348",
       "fix_commit": "34a97a087d8bf834ca6ab9032d9b9d974d420d2c",
       "human_accepted": true,
@@ -35,6 +54,8 @@
     }
   ],
   "evidence_notes": [
+    "Initial diff introduces UPDATE User without VERSIONED. Pinned BaseEntity has @Version and User has no @DynamicUpdate. The mechanism therefore predates its later human report.",
+    "Hibernate bulk-update version semantics: https://docs.jboss.org/hibernate/orm/6.5/userguide/html_single/Hibernate_User_Guide.html#batch-bulk-hql",
     "Initial bot finding is already present in GitHub review; conditional outer-context risk remains allowed, not a new missed target.",
     "Subsequent afterCommit findings are attached to 6e74033, excluded from initial-head recall."
   ]

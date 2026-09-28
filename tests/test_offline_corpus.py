@@ -23,7 +23,10 @@ def test_pinned_fixture_hash(pr):
 
 def test_initial_and_follow_up_are_separate():
     manifest = load_fixture(ROOT / "pr171_initial_manifest.json", ROOT / "pr171_initial.diff")
-    assert not manifest["expected"]
+    assert [item["id"] for item in manifest["expected"]] == ["bulk_update_bypasses_version"]
+    assert (
+        manifest["expected"][0]["introduced_head"] != manifest["expected"][0]["first_reported_head"]
+    )
     assert all(not item["initial_recall_target"] for item in manifest["follow_up"])
     manifest = load_fixture(ROOT / "pr190_initial_manifest.json", ROOT / "pr190_initial.diff")
     assert len(manifest["expected"]) == 5
