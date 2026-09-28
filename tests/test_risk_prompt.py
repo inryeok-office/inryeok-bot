@@ -42,7 +42,9 @@ def test_all_five_pr190_candidates_survive_grounding_contract():
                 changed_symbol=item["symbol"],
                 introduced_by_pr=True,
                 relation_to_change=item["relation_to_change"],
-                causal_evidence=f"{item['symbol']} now adds exception data causing new output failure",
+                causal_evidence=(
+                    f"{item['symbol']} now adds exception data causing new output failure"
+                ),
                 changed_file_anchor={
                     "kind": "ADDED_LINE",
                     "path": item["path"],
