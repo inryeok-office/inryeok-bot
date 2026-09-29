@@ -9,7 +9,13 @@ from app.github.webhook import (
     _record_delivery,
     get_github,
 )
-from app.jobs.models import RepositorySettings, ReviewJob, WebhookDelivery
+from app.jobs.models import (
+    AdminAuditLog,
+    RepositorySettings,
+    ReviewJob,
+    ReviewRun,
+    WebhookDelivery,
+)
 from app.main import app
 
 
@@ -123,9 +129,184 @@ async def test_pull_request_actions(app_client, pr_payload, action):
     body, headers = signed(pr_payload, delivery=f"d-{action}")
     response = await client.post("/webhooks/github", content=body, headers=headers)
     if action == "synchronize":
-        assert response.json()["ignored"] == "trigger_disabled"
+        assert response.json()["ignored"] == "manual_rereview_required"
     else:
         assert response.json()["created"] is True
+
+
+@pytest.mark.asyncio
+async def test_synchronize_waits_for_manual_review_without_external_writes(app_client, pr_payload):
+    client, factory = app_client
+
+    class CountingGitHub(FakeGitHub):
+        get_pull_calls = 0
+        review_calls = 0
+
+        async def get_pull_request(self, *args: object) -> dict[str, object]:
+            self.get_pull_calls += 1
+            return await super().get_pull_request(*args)
+
+        async def create_review(self, *args: object) -> dict[str, int]:
+            self.review_calls += 1
+            return {"id": 1}
+
+    github = CountingGitHub()
+    app.dependency_overrides[get_github] = lambda: github
+    pr_payload["action"] = "synchronize"
+    body, headers = signed(pr_payload, delivery="synchronize-manual-only")
+    response = await client.post("/webhooks/github", content=body, headers=headers)
+
+    assert response.json() == {
+        "accepted": True,
+        "created": False,
+        "ignored": "manual_rereview_required",
+    }
+    assert github.reactions == []
+    assert github.get_pull_calls == 0
+    assert github.review_calls == 0
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 0
+        delivery = await session.scalar(
+            select(WebhookDelivery).where(WebhookDelivery.delivery_id == "synchronize-manual-only")
+        )
+        audit = await session.scalar(
+            select(AdminAuditLog).where(
+                AdminAuditLog.action == "synchronize_waiting_for_manual_review"
+            )
+        )
+        assert delivery and delivery.status == "IGNORED"
+        assert delivery.safe_reason == "MANUAL_REREVIEW_REQUIRED"
+        assert audit and "새 커밋 감지됨" in audit.summary
+
+
+@pytest.mark.asyncio
+async def test_manual_review_uses_latest_head_and_ignores_previous_head_success(
+    app_client,
+):
+    client, factory = app_client
+
+    class NewHeadGitHub(FakeGitHub):
+        async def get_pull_request(self, *_: object) -> dict[str, object]:
+            return {
+                "state": "open",
+                "draft": False,
+                "merged": False,
+                "base": {"sha": "a" * 40},
+                "head": {"sha": "c" * 40},
+            }
+
+    github = NewHeadGitHub()
+    app.dependency_overrides[get_github] = lambda: github
+    async with factory() as session:
+        previous = ReviewJob(
+            delivery_id="old-head-success",
+            installation_id=1,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=7,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type="AUTO",
+            status="SUCCEEDED",
+        )
+        session.add(previous)
+        await session.flush()
+        session.add(
+            ReviewRun(
+                job_id=previous.id,
+                base_sha=previous.base_sha,
+                head_sha=previous.head_sha,
+                summary="old",
+                github_review_id=10,
+                reviewed_file_count=1,
+                finding_count=0,
+            )
+        )
+        await session.commit()
+    payload = {
+        "action": "created",
+        "installation": {"id": 1},
+        "repository": {"name": "repo", "owner": {"login": "acme"}},
+        "sender": {"login": "alice"},
+        "issue": {"number": 7, "pull_request": {"url": "x"}},
+        "comment": {"id": 1101, "body": "/review", "user": {"login": "alice"}},
+    }
+    body, headers = signed(payload, "issue_comment", "manual-latest-head")
+    response = await client.post("/webhooks/github", content=body, headers=headers)
+    assert response.json()["created"] is True
+    async with factory() as session:
+        job = await session.scalar(select(ReviewJob).where(ReviewJob.source_comment_id == 1101))
+        assert job and job.head_sha == "c" * 40 and job.trigger_action == "command"
+
+
+@pytest.mark.asyncio
+async def test_same_head_success_repeated_manual_review_posts_one_notice_and_no_job(
+    app_client,
+):
+    client, factory = app_client
+    async with factory() as session:
+        previous = ReviewJob(
+            delivery_id="current-head-success",
+            installation_id=1,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=7,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type="COMMAND",
+            status="SUCCEEDED",
+        )
+        session.add(previous)
+        await session.flush()
+        session.add(
+            ReviewRun(
+                job_id=previous.id,
+                base_sha=previous.base_sha,
+                head_sha=previous.head_sha,
+                summary="current",
+                github_review_id=11,
+                reviewed_file_count=1,
+                finding_count=0,
+            )
+        )
+        await session.commit()
+    for delivery, comment_id in (("repeat-success-1", 1201), ("repeat-success-2", 1202)):
+        payload = {
+            "action": "created",
+            "installation": {"id": 1},
+            "repository": {"name": "repo", "owner": {"login": "acme"}},
+            "sender": {"login": "alice"},
+            "issue": {"number": 7, "pull_request": {"url": "x"}},
+            "comment": {"id": comment_id, "body": "/review", "user": {"login": "alice"}},
+        }
+        body, headers = signed(payload, "issue_comment", delivery)
+        response = await client.post("/webhooks/github", content=body, headers=headers)
+        assert response.json()["ignored"] == "already_reviewed"
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(ReviewJob)) == 1
+        from app.jobs.models import ReviewStatusNotice
+
+        assert await session.scalar(select(func.count()).select_from(ReviewStatusNotice)) == 1
+
+
+@pytest.mark.asyncio
+async def test_bot_account_review_command_is_ignored(app_client):
+    client, _ = app_client
+    payload = {
+        "action": "created",
+        "installation": {"id": 1},
+        "repository": {"name": "repo", "owner": {"login": "acme"}},
+        "sender": {"login": "automation", "type": "Bot"},
+        "issue": {"number": 7, "pull_request": {"url": "x"}},
+        "comment": {
+            "id": 1301,
+            "body": "/review",
+            "user": {"login": "automation", "type": "Bot"},
+        },
+    }
+    body, headers = signed(payload, "issue_comment", "bot-review-command")
+    response = await client.post("/webhooks/github", content=body, headers=headers)
+    assert response.json()["ignored"] == "bot_event"
 
 
 @pytest.mark.asyncio

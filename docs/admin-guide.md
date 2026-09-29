@@ -4,7 +4,7 @@
 
 ## 자동 리뷰 정책
 
-기본 trigger는 `opened`, `reopened`, `ready_for_review`가 활성화되고 `synchronize`는 비활성화됩니다. 저장소에서 push 자동 리뷰를 켜면 기본 debounce는 60초이며, 연속 webhook은 최신 head만 실행합니다. `/review` 명령의 기본 cooldown도 60초입니다.
+기본 trigger는 `opened`, `reopened`, `ready_for_review`가 활성화됩니다. `pull_request.synchronize`는 새 커밋을 기록하고 `MANUAL_REREVIEW_REQUIRED`로 종료하며 Job/Codex/GitHub Review/reaction을 만들지 않습니다. 새 head의 재리뷰는 사람이 최신 PR에 `/review`를 작성할 때만 실행됩니다. `/review` 명령의 기본 cooldown은 60초입니다.
 
 ## 설정
 
@@ -14,7 +14,7 @@
 
 ## Job과 재리뷰
 
-Job 상세에서 trigger, 예약 시각, superseded 여부, 적용 설정, 필터 단계별 개수를 확인할 수 있습니다. 실패 Job만 정책에 따라 재시도하며 동일 head의 중복 게시를 marker로 방지합니다. 재리뷰 비교는 모델의 비결정성을 고려해 `다시 발견되지 않음`을 `해결`로 단정하지 않습니다.
+Job 상세에서 trigger, 예약 시각, superseded 여부, 적용 설정, 필터 단계별 개수를 확인할 수 있습니다. 실패 Job만 정책에 따라 재시도하며 동일 head의 중복 게시를 marker로 방지합니다. 이전 head의 성공 Review는 최신 head의 `/review`를 차단하지 않습니다. 재리뷰 비교는 모델의 비결정성을 고려해 `다시 발견되지 않음`을 `해결`로 단정하지 않습니다.
 
 ## 운영 주의
 

@@ -265,6 +265,8 @@ def validate_repository_policy_patch(
     ):
         if name in normalized and normalized[name] not in {None, True, False}:
             raise ValueError(f"{name} must be true, false, or null")
+    if normalized.get("override_review_on_synchronize") is True:
+        raise ValueError("automatic synchronize rereview is disabled; use /review")
     if "override_language" in normalized and normalized["override_language"] is not None:
         language = str(normalized["override_language"])
         if language not in {"ko", "en"}:
@@ -411,6 +413,8 @@ def validate_global_policy_patch(
     ):
         if name in normalized and not isinstance(normalized[name], bool):
             raise ValueError(f"{name} must be boolean")
+    if normalized.get("review_on_synchronize") is True:
+        raise ValueError("automatic synchronize rereview is disabled; use /review")
     if "language" in normalized and normalized["language"] not in {"ko", "en"}:
         raise ValueError("unsupported language")
     if "review_profile" in normalized:

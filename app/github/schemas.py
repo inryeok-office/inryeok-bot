@@ -7,6 +7,11 @@ class GitHubModel(BaseModel):
 
 class User(GitHubModel):
     login: str
+    type: str | None = None
+
+    @property
+    def is_bot(self) -> bool:
+        return (self.type or "").casefold() == "bot" or self.login.casefold().endswith("[bot]")
 
 
 class Repository(GitHubModel):

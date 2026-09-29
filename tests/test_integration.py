@@ -136,11 +136,10 @@ async def test_new_head_duplicate_only_preserves_still_count_without_review(
         session.add(second)
         await session.commit()
         github = GitHub()
-        await ReviewService(session, github, FakeRunner(output)).execute(second)
-        run = await session.scalar(select(ReviewRun).where(ReviewRun.job_id == second.id))
-        assert run.duplicate_only and run.github_review_id is None
-        assert run.comparison_still_count == 1 and run.comparison_not_detected_count == 0
-        assert second.previous_reviewed_head == first.head_sha
+        with pytest.raises(ReviewSkipped, match="explicit /review"):
+            await ReviewService(session, github, FakeRunner(output)).execute(second)
+        assert await session.scalar(select(ReviewRun).where(ReviewRun.job_id == second.id)) is None
+        assert second.previous_reviewed_head is None
         assert github.payload is None
 
 

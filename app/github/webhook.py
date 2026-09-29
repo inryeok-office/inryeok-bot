@@ -16,6 +16,7 @@ from app.github.client import GitHubClient
 from app.github.schemas import IssueCommentEvent, PullRequestEvent, is_review_command
 from app.github.verifier import verify_signature
 from app.jobs.models import (
+    AdminAuditLog,
     GitHubInstallation,
     GlobalReviewSettings,
     InstallationStatus,
@@ -39,6 +40,7 @@ DELIVERY_IGNORED = "IGNORED"
 DELIVERY_FAILED_RETRYABLE = "FAILED_RETRYABLE"
 DELIVERY_FAILED_FINAL = "FAILED_FINAL"
 DELIVERY_MANUAL_REDELIVERY_REQUIRED = "MANUAL_REDELIVERY_REQUIRED"
+MANUAL_REREVIEW_REQUIRED = "MANUAL_REREVIEW_REQUIRED"
 
 
 async def get_github(settings: Settings = Depends(get_settings)) -> GitHubClient:
@@ -392,7 +394,10 @@ async def github_webhook(
             pr_event = PullRequestEvent.model_validate(payload)
             if pr_event.action not in SUPPORTED_PR_ACTIONS:
                 return await ignored("unsupported_action")
-            if pr_event.sender.login.lower() == settings.github_bot_login.lower():
+            if (
+                pr_event.sender.is_bot
+                or pr_event.sender.login.lower() == settings.github_bot_login.lower()
+            ):
                 return await ignored("bot_event")
             repo_settings = await _repository_settings(
                 session,
@@ -404,7 +409,42 @@ async def github_webhook(
                 account_login=pr_event.repository.owner.login,
             )
             effective = await _effective_settings(session, repo_settings, settings)
-            if not effective.enabled or not effective.auto_review_enabled:
+            if not effective.enabled:
+                return await ignored("repository_disabled")
+            if pr_event.action == "synchronize":
+                # Synchronize is a durable observation only.  Do not resolve
+                # the latest head, enqueue a Job, add a reaction, or arm the
+                # old debounce path: an explicit human /review is required.
+                if pr_event.pull_request.state != "open" or pr_event.pull_request.merged:
+                    return await ignored("closed_or_merged")
+                if pr_event.pull_request.draft:
+                    return await ignored("draft")
+                session.add(
+                    AdminAuditLog(
+                        actor_login="system:webhook",
+                        action="synchronize_waiting_for_manual_review",
+                        target_type="pull_request",
+                        target_id=(
+                            f"{repo_settings.repository_owner}/"
+                            f"{repo_settings.repository_name}#"
+                            f"{pr_event.pull_request.number}"
+                        ),
+                        summary=(
+                            "새 커밋 감지됨 — `/review` 요청 대기; "
+                            f"head={pr_event.pull_request.head.sha}"
+                        ),
+                    )
+                )
+                await session.commit()
+                await _finish_delivery(
+                    session, delivery, DELIVERY_IGNORED, MANUAL_REREVIEW_REQUIRED
+                )
+                return {
+                    "accepted": True,
+                    "created": False,
+                    "ignored": "manual_rereview_required",
+                }
+            if not effective.auto_review_enabled:
                 return await ignored("repository_disabled")
             if not _trigger_enabled(pr_event.action, effective):
                 return await ignored("trigger_disabled")
@@ -442,6 +482,7 @@ async def github_webhook(
                 return await ignored("not_pr_comment")
             if (
                 comment_event.sender.login.lower() == settings.github_bot_login.lower()
+                or comment_event.comment.user.is_bot
                 or comment_event.comment.user.login.lower() == settings.github_bot_login.lower()
             ):
                 return await ignored("bot_event")
@@ -481,7 +522,9 @@ async def github_webhook(
                 comment_event.repository.name,
                 comment_event.issue.number,
             )
-            if raw_pr.get("draft") and repo_settings.ignore_draft:
+            if raw_pr.get("state") == "closed" or bool(raw_pr.get("merged")):
+                return await ignored("closed_or_merged")
+            if raw_pr.get("draft"):
                 return await ignored("draft")
             installation_id = comment_event.installation.id
             owner = repo_settings.repository_owner

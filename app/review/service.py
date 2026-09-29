@@ -2,7 +2,6 @@ import hashlib
 import json
 import logging
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,7 +16,6 @@ from app.github.client import GitHubAPIError, GitHubClient
 from app.jobs.models import (
     FindingRecord,
     GlobalReviewSettings,
-    JobStatus,
     RepositorySettings,
     ReviewFindingDiagnostic,
     ReviewJob,
@@ -25,7 +23,6 @@ from app.jobs.models import (
     ReviewRun,
     TriggerType,
 )
-from app.jobs.repository import JobRepository
 from app.review.context import ContextBudget, select_context
 from app.review.deduplicator import fingerprint
 from app.review.diagnostics import StageCounts, context_manifest
@@ -52,6 +49,23 @@ class ReviewService:
         self.session, self.github, self.runner = session, github, runner
         self._pass_origins: list[str] = []
         self._candidates: list[Finding] = []
+
+    async def _assert_current_command_head(self, job: ReviewJob) -> None:
+        """Fail closed if a manual request became stale while queued/running."""
+        current = await self.github.get_pull_request(
+            job.installation_id,
+            job.repository_owner,
+            job.repository_name,
+            job.pull_request_number,
+        )
+        if current.get("state") == "closed" or bool(current.get("merged")):
+            raise ReviewSkipped("pull request is not reviewable", "PR_NOT_REVIEWABLE")
+        if bool(current.get("draft")):
+            raise ReviewSkipped("pull request is draft", "PR_NOT_REVIEWABLE")
+        raw_head = current.get("head")
+        latest_head = str(raw_head.get("sha", "")) if isinstance(raw_head, dict) else ""
+        if latest_head and latest_head != job.head_sha:
+            raise ReviewSkipped("manual review head is stale", "STALE_HEAD")
 
     async def _persist_rejection_diagnostics(
         self, run: ReviewRun, diagnostics: list[FindingRejectionDiagnostic]
@@ -86,6 +100,13 @@ class ReviewService:
         await self.session.flush()
 
     async def execute(self, job: ReviewJob, execution_id: str | None = None) -> None:
+        if job.trigger_action == "synchronize":
+            # Historical pending synchronize jobs must fail closed after the
+            # policy change.  They remain durable rows, but cannot launch
+            # Codex or publish a stale automatic review.
+            raise ReviewSkipped(
+                "synchronize rereview requires an explicit /review", "MANUAL_REREVIEW_REQUIRED"
+            )
         # Keep direct callers (tests/administrative runners) on the same
         # durable identity contract as the worker.  The worker commits this
         # value before entering the executor; here we at least bind it before
@@ -124,88 +145,8 @@ class ReviewService:
         effective = resolve(global_settings, config, self.github.settings, catalog=model_catalog)
         if not effective.enabled:
             raise ReviewSkipped("repository is disabled")
-        if job.trigger_action == "synchronize":
-            if not effective.auto_review_enabled or not effective.review_on_synchronize:
-                raise ReviewSkipped("synchronize policy is disabled", "SYNCHRONIZE_DISABLED")
-            pr = await self.github.get_pull_request(
-                job.installation_id,
-                job.repository_owner,
-                job.repository_name,
-                job.pull_request_number,
-            )
-            if pr.get("state") != "open" or pr.get("merged") or pr.get("draft"):
-                raise ReviewSkipped("pull request is not reviewable", "PR_NOT_REVIEWABLE")
-            latest_head = str(pr["head"]["sha"])
-            if latest_head != job.head_sha:
-                latest_spec = spec_for(self.github.settings, effective.model, model_catalog)
-                latest, _ = await JobRepository(self.session).enqueue(
-                    max_pending_jobs=self.github.settings.max_pending_jobs,
-                    max_repository_pending_jobs=self.github.settings.max_repository_pending_jobs,
-                    delivery_id="stale-" + uuid4().hex,
-                    installation_id=job.installation_id,
-                    repository_owner=job.repository_owner,
-                    repository_name=job.repository_name,
-                    pull_request_number=job.pull_request_number,
-                    base_sha=str(pr["base"]["sha"]),
-                    head_sha=latest_head,
-                    trigger_type=TriggerType.AUTO,
-                    trigger_action="synchronize",
-                    model=effective.model,
-                    reasoning_effort=effective.reasoning_effort,
-                    model_source=(
-                        "REPOSITORY_OVERRIDE"
-                        if config.override_model is not None
-                        else "GLOBAL_DEFAULT"
-                        if effective.model is not None
-                        else CLI_DEFAULT
-                    ),
-                    reasoning_source=(
-                        "REPOSITORY_OVERRIDE"
-                        if config.override_reasoning_effort is not None
-                        else "GLOBAL_DEFAULT"
-                    ),
-                    model_catalog_version=await db_catalog_version(self.session),
-                    model_verification_id=(
-                        (latest_spec.verification_id or latest_spec.version)
-                        if latest_spec is not None
-                        else None
-                    ),
-                    not_before=datetime.now(UTC)
-                    + timedelta(seconds=effective.synchronize_debounce_seconds),
-                )
-                job.superseded_by_head_sha = latest.head_sha if latest else latest_head
-                await self.session.commit()
-                raise ReviewSkipped("newer head queued before execution", "STALE_HEAD")
-            same_head = await self.session.scalar(
-                select(ReviewJob.id)
-                .where(
-                    ReviewJob.installation_id == job.installation_id,
-                    ReviewJob.repository_owner == job.repository_owner,
-                    ReviewJob.repository_name == job.repository_name,
-                    ReviewJob.pull_request_number == job.pull_request_number,
-                    ReviewJob.head_sha == job.head_sha,
-                    ReviewJob.status == JobStatus.SUCCEEDED,
-                    ReviewJob.id != job.id,
-                )
-                .limit(1)
-            )
-            if same_head is not None:
-                raise ReviewSkipped("head already reviewed", "ALREADY_REVIEWED_CURRENT_HEAD")
-            previous = await self.session.scalar(
-                select(ReviewJob)
-                .join(ReviewRun)
-                .where(
-                    ReviewJob.installation_id == job.installation_id,
-                    ReviewJob.repository_owner == job.repository_owner,
-                    ReviewJob.repository_name == job.repository_name,
-                    ReviewJob.pull_request_number == job.pull_request_number,
-                    ReviewJob.status == JobStatus.SUCCEEDED,
-                    ReviewJob.head_sha != job.head_sha,
-                )
-                .order_by(ReviewJob.finished_at.desc(), ReviewJob.id.desc())
-                .limit(1)
-            )
-            job.previous_reviewed_head = previous.head_sha if previous else None
+        if job.trigger_action == "command":
+            await self._assert_current_command_head(job)
         # New jobs carry their effective model/effort from enqueue time. Do
         # not silently change an in-flight job when policy is edited later.
         if job.model_source is not None or job.reasoning_source is not None:
@@ -216,8 +157,8 @@ class ReviewService:
             )
         # A repeated /review for the same head must not spend another Codex
         # execution merely to discover the existing GitHub marker afterwards.
-        # Compare the immutable execution inputs as well as the head so a
-        # prompt/profile/model change intentionally permits a fresh review.
+        # The head is the idempotency boundary even if other policy inputs
+        # changed after the successful review.
         completed_jobs = (
             await self.session.scalars(
                 select(ReviewJob)
@@ -233,14 +174,10 @@ class ReviewService:
                 )
             )
         ).all()
-        for prior_job in completed_jobs:
-            if (
-                prior_job.model == effective.model
-                and prior_job.reasoning_effort == effective.reasoning_effort
-            ):
-                raise ReviewSkipped(
-                    "same review input already completed", "ALREADY_REVIEWED_CURRENT_HEAD"
-                )
+        for _prior_job in completed_jobs:
+            raise ReviewSkipped(
+                "same review input already completed", "ALREADY_REVIEWED_CURRENT_HEAD"
+            )
         # Preserve the effective policy used by this job for auditability.
         job.model = effective.model
         job.reasoning_effort = effective.reasoning_effort
@@ -576,6 +513,8 @@ class ReviewService:
         # finding can never be published merely because observability failed.
         await self.session.flush()
         await self.session.commit()
+        if job.trigger_action == "command":
+            await self._assert_current_command_head(job)
         previous_auto_summary = None
         if job.trigger_type in {TriggerType.AUTO, TriggerType.RETRY}:
             previous_auto_summary = await self.session.scalar(

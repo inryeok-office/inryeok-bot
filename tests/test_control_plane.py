@@ -125,3 +125,10 @@ def test_global_patch_rejects_unknown_and_unsafe_values() -> None:
         validate_global_policy_patch({"processing_paused": True}, _settings())
     with pytest.raises(ValueError, match="outside safety limit"):
         validate_global_policy_patch({"codex_timeout_seconds": 1}, _settings())
+
+
+def test_synchronize_auto_rereview_cannot_be_enabled_again() -> None:
+    with pytest.raises(ValueError, match="automatic synchronize rereview"):
+        validate_global_policy_patch({"review_on_synchronize": True}, _settings())
+    with pytest.raises(ValueError, match="automatic synchronize rereview"):
+        validate_repository_policy_patch({"override_review_on_synchronize": True}, _settings())

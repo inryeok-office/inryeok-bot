@@ -461,7 +461,7 @@ async def test_global_settings_are_saved_with_audit_log(app_client) -> None:
             "review_on_opened": "true",
             "review_on_reopened": "true",
             "review_on_ready_for_review": "true",
-            "review_on_synchronize": "true",
+            "review_on_synchronize": "false",
         },
     )
     assert response.status_code == 303

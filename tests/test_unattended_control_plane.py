@@ -4,9 +4,10 @@ import pytest
 from sqlalchemy import select
 
 from app.config import Settings
-from app.jobs.models import JobStatus, OpsIncident, ReviewJob, TriggerType
+from app.jobs.models import JobStatus, OpsIncident, ReviewJob, TriggerType, WebhookDelivery
 from app.jobs.repository import JobRepository
 from app.ops.alerts import record_incident
+from app.ops.watchdog import inspect_and_recover
 from app.review.model_catalog import load_catalog, validate_model_effort
 
 
@@ -107,3 +108,25 @@ async def test_stale_job_without_execution_identity_can_be_requeued(app_client) 
         assert await JobRepository(session).recover_stale(60, 3) == 1
         await session.refresh(job)
         assert job.status == JobStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_manual_wait_delivery_is_terminal_and_not_watchdog_stale(app_client) -> None:
+    _, factory = app_client
+    settings = Settings(environment="test")
+    async with factory() as session:
+        session.add(
+            WebhookDelivery(
+                delivery_id="manual-wait",
+                event_name="pull_request",
+                status="IGNORED",
+                safe_reason="MANUAL_REREVIEW_REQUIRED",
+                processing_started_at=datetime.now(UTC) - timedelta(hours=2),
+                completed_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+        report = await inspect_and_recover(session, settings, apply=False)
+        assert report["stale_webhooks"] == 0
+        assert report["stale_pending"] == 0
+        assert report["stale_running"] == 0

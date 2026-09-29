@@ -236,12 +236,11 @@ def resolve(
             repository.override_review_on_ready_for_review,
             global_settings.review_on_ready_for_review,
         ),
-        review_on_synchronize=choose(
-            repository.override_review_on_synchronize,
-            global_settings.review_on_synchronize
-            if global_settings.review_on_synchronize is not None
-            else False,
-        ),
+        # The legacy field remains persisted for backwards compatibility, but
+        # push-triggered rereviews are now a fixed manual-only policy.  Keeping
+        # the effective value canonical prevents webhook, worker, and admin
+        # read models from interpreting an old true override differently.
+        review_on_synchronize=False,
         synchronize_debounce_seconds=min(
             3600,
             max(

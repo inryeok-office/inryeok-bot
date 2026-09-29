@@ -142,6 +142,25 @@ class JobRepository:
         await self.session.scalar(
             select(GlobalReviewSettings).where(GlobalReviewSettings.id == 1).with_for_update()
         )
+        if values["trigger_type"] == TriggerType.COMMAND:
+            # The singleton lock serializes admission for concurrent comments.
+            # Re-check the active same-head identity after acquiring it so two
+            # different /review comments cannot both create work.
+            existing_active = await self.session.scalar(
+                select(ReviewJob)
+                .where(
+                    ReviewJob.installation_id == values["installation_id"],
+                    ReviewJob.repository_owner == values["repository_owner"],
+                    ReviewJob.repository_name == values["repository_name"],
+                    ReviewJob.pull_request_number == values["pull_request_number"],
+                    ReviewJob.head_sha == values["head_sha"],
+                    ReviewJob.status.in_({JobStatus.PENDING, JobStatus.RUNNING}),
+                )
+                .order_by(ReviewJob.id)
+                .limit(1)
+            )
+            if existing_active is not None:
+                return existing_active, False
         superseded: ColumnElement[bool] = false()
         if values["trigger_type"] == TriggerType.AUTO:
             existing_auto = await self.session.scalar(
