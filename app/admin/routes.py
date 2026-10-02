@@ -630,6 +630,14 @@ async def update_global_settings(
     command_cooldown_seconds: int = Form(60),
     review_domain_mode: str = Form("AUTO"),
     manual_review_domains: list[str] = Form([]),
+    minimum_review_type: str = Form("SUGGESTION"),
+    max_inline_comments: int = Form(3),
+    allow_suggestions: bool = Form(False),
+    allow_questions: bool = Form(False),
+    allow_positive_fallback: bool = Form(False),
+    allow_review_summary: bool = Form(False),
+    allow_repository_config: bool = Form(False),
+    allow_suggested_changes: bool = Form(False),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     principal: AdminPrincipal = Depends(require_admin),
@@ -686,6 +694,14 @@ async def update_global_settings(
         "review_on_synchronize": review_on_synchronize,
         "synchronize_debounce_seconds": synchronize_debounce_seconds,
         "command_cooldown_seconds": command_cooldown_seconds,
+        "minimum_review_type": minimum_review_type,
+        "max_inline_comments": max_inline_comments,
+        "allow_suggestions": allow_suggestions,
+        "allow_questions": allow_questions,
+        "allow_positive_fallback": allow_positive_fallback,
+        "allow_review_summary": allow_review_summary,
+        "allow_repository_config": allow_repository_config,
+        "allow_suggested_changes": allow_suggested_changes,
     }
     for name, value in values.items():
         if submitted(name):
@@ -745,6 +761,12 @@ async def update_repository(
     override_command_cooldown_seconds: str = Form(""),
     override_review_domain_mode: str = Form("inherit"),
     override_manual_review_domains: list[str] = Form([]),
+    override_minimum_review_type: str = Form(""),
+    override_max_inline_comments: str = Form(""),
+    override_allow_suggestions: str = Form("inherit"),
+    override_allow_questions: str = Form("inherit"),
+    override_allow_positive_fallback: str = Form("inherit"),
+    override_allow_suggested_changes: str = Form("inherit"),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     principal: AdminPrincipal = Depends(require_admin),
@@ -831,6 +853,20 @@ async def update_repository(
             }:
                 raise ValueError("unsupported minimum severity")
             policy_patch["override_minimum_severity"] = override_minimum_severity or None
+        if present("override_minimum_review_type"):
+            policy_patch["override_minimum_review_type"] = override_minimum_review_type or None
+        if present("override_max_inline_comments"):
+            policy_patch["override_max_inline_comments"] = _optional_int(
+                override_max_inline_comments, 1, 3
+            )
+        for name in (
+            "override_allow_suggestions",
+            "override_allow_questions",
+            "override_allow_positive_fallback",
+            "override_allow_suggested_changes",
+        ):
+            if present(name):
+                policy_patch[name] = _optional_bool(locals()[name])
         if present("override_enabled_categories"):
             policy_patch["override_enabled_categories"] = override_enabled_categories or None
         for event in ("opened", "reopened", "ready_for_review", "synchronize"):

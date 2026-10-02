@@ -236,6 +236,12 @@ _REPOSITORY_PATCH_FIELDS = frozenset(
         "override_review_on_synchronize",
         "override_review_domain_mode",
         "override_manual_review_domains",
+        "override_minimum_review_type",
+        "override_max_inline_comments",
+        "override_allow_suggestions",
+        "override_allow_questions",
+        "override_allow_positive_fallback",
+        "override_allow_suggested_changes",
     }
 )
 
@@ -262,6 +268,10 @@ def validate_repository_policy_patch(
         "override_review_on_reopened",
         "override_review_on_ready_for_review",
         "override_review_on_synchronize",
+        "override_allow_suggestions",
+        "override_allow_questions",
+        "override_allow_positive_fallback",
+        "override_allow_suggested_changes",
     ):
         if name in normalized and normalized[name] not in {None, True, False}:
             raise ValueError(f"{name} must be true, false, or null")
@@ -308,6 +318,19 @@ def validate_repository_policy_patch(
         if severity not in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}:
             raise ValueError("unsupported minimum severity")
         normalized["override_minimum_severity"] = severity
+    if "override_minimum_review_type" in normalized and normalized["override_minimum_review_type"]:
+        review_type = str(normalized["override_minimum_review_type"]).upper()
+        if review_type not in {"MUST_FIX", "SHOULD_FIX", "SUGGESTION"}:
+            raise ValueError("unsupported minimum review type")
+        normalized["override_minimum_review_type"] = review_type
+    if (
+        "override_max_inline_comments" in normalized
+        and normalized["override_max_inline_comments"] is not None
+    ):
+        value = int(normalized["override_max_inline_comments"])
+        if not 1 <= value <= 3:
+            raise ValueError("maximum inline comments outside safety limit")
+        normalized["override_max_inline_comments"] = value
     if "override_review_domain_mode" in normalized and normalized["override_review_domain_mode"]:
         mode = str(normalized["override_review_domain_mode"]).upper()
         if mode not in {"AUTO", "MANUAL"}:
@@ -388,6 +411,14 @@ _GLOBAL_PATCH_FIELDS = frozenset(
         "codex_timeout_seconds",
         "review_domain_mode",
         "manual_review_domains",
+        "minimum_review_type",
+        "max_inline_comments",
+        "allow_suggestions",
+        "allow_questions",
+        "allow_positive_fallback",
+        "allow_review_summary",
+        "allow_repository_config",
+        "allow_suggested_changes",
     }
 )
 
@@ -410,6 +441,12 @@ def validate_global_policy_patch(
         "review_on_reopened",
         "review_on_ready_for_review",
         "review_on_synchronize",
+        "allow_suggestions",
+        "allow_questions",
+        "allow_positive_fallback",
+        "allow_review_summary",
+        "allow_repository_config",
+        "allow_suggested_changes",
     ):
         if name in normalized and not isinstance(normalized[name], bool):
             raise ValueError(f"{name} must be boolean")
@@ -446,6 +483,16 @@ def validate_global_policy_patch(
         if severity not in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}:
             raise ValueError("unsupported minimum severity")
         normalized["minimum_severity"] = severity
+    if "minimum_review_type" in normalized:
+        review_type = str(normalized["minimum_review_type"]).upper()
+        if review_type not in {"MUST_FIX", "SHOULD_FIX", "SUGGESTION"}:
+            raise ValueError("unsupported minimum review type")
+        normalized["minimum_review_type"] = review_type
+    if "max_inline_comments" in normalized:
+        value = int(normalized["max_inline_comments"])
+        if not 1 <= value <= 3:
+            raise ValueError("maximum inline comments outside safety limit")
+        normalized["max_inline_comments"] = value
     if "ignored_paths" in normalized and normalized["ignored_paths"] is not None:
         normalized["ignored_paths"] = "\n".join(validate_paths(str(normalized["ignored_paths"])))
     for name in (

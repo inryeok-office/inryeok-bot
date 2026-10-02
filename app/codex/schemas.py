@@ -11,6 +11,16 @@ class Severity(StrEnum):
     LOW = "LOW"
 
 
+class ReviewType(StrEnum):
+    """The collaboration intent of an observation, independent of severity."""
+
+    MUST_FIX = "MUST_FIX"
+    SHOULD_FIX = "SHOULD_FIX"
+    SUGGESTION = "SUGGESTION"
+    QUESTION = "QUESTION"
+    POSITIVE = "POSITIVE"
+
+
 class Category(StrEnum):
     BUG = "BUG"
     CORRECTNESS = "CORRECTNESS"
@@ -86,6 +96,9 @@ class Finding(BaseModel):
     # Legacy structured output omitted side for line findings; RIGHT is the
     # only publishable side and remains the safe backwards-compatible default.
     side: Literal["RIGHT"] | None = None
+    # Legacy results represented actionable defects only.  Keeping MUST_FIX as
+    # their explicit compatibility projection avoids rewriting history.
+    review_type: ReviewType = ReviewType.MUST_FIX
     category: Category
     severity: Severity
     confidence: float = Field(ge=0, le=1)
@@ -106,13 +119,25 @@ class Finding(BaseModel):
     changed_file_anchor: ChangedFileAnchor | None = None
     defect_identity: str | None = Field(default=None, max_length=128, pattern=r"^[a-z][a-z0-9_]+$")
     causal_chain: list[str] | None = Field(default=None, min_length=3, max_length=3)
+    why_it_matters: str | None = Field(default=None, max_length=1200)
+    suggested_action: str | None = Field(default=None, max_length=1200)
+    suggested_patch: str | None = Field(default=None, max_length=3000)
+    blocking: bool | None = None
+    style_guide_reference: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="before")
     @classmethod
     def default_line_side(cls, value: object) -> object:
-        if isinstance(value, dict) and value.get("scope", "LINE") == "LINE":
+        if isinstance(value, dict):
             value = dict(value)
-            value.setdefault("side", "RIGHT")
+            if value.get("scope", "LINE") == "LINE":
+                value.setdefault("side", "RIGHT")
+            # The old public structured-output shape used suggested_fix.  Do
+            # not silently discard it when an executor returns an old result.
+            if value.get("suggested_action") is None and value.get("suggested_fix") is not None:
+                value["suggested_action"] = value["suggested_fix"]
+            if value.get("blocking") is None and value.get("review_type", "MUST_FIX") == "MUST_FIX":
+                value["blocking"] = True
         return value
 
 

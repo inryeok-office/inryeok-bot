@@ -1,7 +1,7 @@
 from app.admin.auth import AdminAuthAdapter
 from app.codex.schemas import Category, Finding, FindingScope, Severity
 from app.config import Settings
-from app.github.schemas import is_review_command
+from app.github.schemas import is_review_command, parse_review_command
 from app.logging import redact
 from app.review.deduplicator import fingerprint
 from app.review.publisher import build_review_payload
@@ -34,17 +34,24 @@ def test_command_parser_ignores_markdown_code_and_quotes() -> None:
     assert not is_review_command("/review full")
 
 
+def test_extended_commands_are_normalized_without_reinterpreting_explain_text() -> None:
+    assert parse_review_command(" /REVIEW summary\r\n") == "summary"
+    assert parse_review_command("/review help") == "help"
+    assert parse_review_command("/review resolve") == "resolve"
+    assert parse_review_command("/review explain 이 정책은 의도된 것인가요?") == "explain"
+
+
 def test_review_payload_renders_korean_markdown_summary() -> None:
     payload = build_review_payload([_finding()], 3, "a" * 40)
 
     assert payload["body"].startswith("## \ub9ac\ubdf0 \uacb0\uacfc")
-    assert "\ubcc0\uacbd\ub41c **3\uac1c \ud30c\uc77c**" in payload["body"]
+    assert "\uc778\ub77c\uc778 \uad00\ucc30 1\uac1c" in payload["body"]
     assert "| \uc2ec\uac01\ub3c4 | \uac1c\uc218 |" in payload["body"]
     assert "| Critical | 0 |" in payload["body"]
     assert "| High | 1 |" in payload["body"]
     assert "| Medium | 0 |" in payload["body"]
-    assert "### \uc8fc\uc694 \ub0b4\uc6a9" in payload["body"]
-    assert "**HIGH \u00b7 NULL_SAFETY**" in payload["body"]
+    assert "### \uc8fc\uc694 \uad00\ucc30" in payload["body"]
+    assert "**\ud544\uc218 \uc218\uc815 \u00b7 HIGH**" in payload["body"]
     assert payload["body"].endswith("<!-- inryeok-review:v1 -->")
 
 
@@ -55,7 +62,9 @@ def test_inline_review_keeps_valid_markdown_without_forcing_sections() -> None:
     )
     inline = build_review_payload([finding], 1, "b" * 40)["comments"][0]["body"]
 
-    assert inline.startswith("**\U0001f534 HIGH \u00b7 NULL_SAFETY**\n\n### findById result check")
+    assert inline.startswith(
+        "**\ud544\uc218 \uc218\uc815 \u00b7 HIGH**\n\n### findById result check"
+    )
     assert "`findById()`" in inline
     assert "**\uc601\ud5a5**" in inline
     assert "```" not in inline

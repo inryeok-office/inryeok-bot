@@ -4,7 +4,7 @@ from pathlib import PurePosixPath
 
 from app.jobs.models import ReviewDomain, ReviewDomainMode
 
-PROMPT_VERSION = "detailed-review-v4-risk-aware"
+PROMPT_VERSION = "detailed-review-v5-collaborative-inline"
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatch
 
+from app.codex.schemas import ReviewType
 from app.config import Settings
 from app.jobs.models import (
     GlobalReviewSettings,
@@ -62,6 +63,12 @@ class EffectiveReviewSettings:
     command_cooldown_seconds: int
     review_domain_mode: str
     manual_review_domains: str
+    minimum_review_type: str
+    max_inline_comments: int
+    allow_suggestions: bool
+    allow_questions: bool
+    allow_positive_fallback: bool
+    allow_suggested_changes: bool
 
 
 def validate_choice(
@@ -264,6 +271,36 @@ def resolve(
         review_domain_mode=domain_mode,
         manual_review_domains=choose(
             repository.override_manual_review_domains, global_settings.manual_review_domains or ""
+        ),
+        minimum_review_type=choose(
+            repository.override_minimum_review_type,
+            getattr(global_settings, "minimum_review_type", None) or ReviewType.SUGGESTION.value,
+        ).upper(),
+        max_inline_comments=min(
+            3,
+            max(
+                1,
+                choose(
+                    repository.override_max_inline_comments,
+                    getattr(global_settings, "max_inline_comments", None) or 3,
+                ),
+            ),
+        ),
+        allow_suggestions=choose(
+            repository.override_allow_suggestions,
+            getattr(global_settings, "allow_suggestions", None) is not False,
+        ),
+        allow_questions=choose(
+            repository.override_allow_questions,
+            getattr(global_settings, "allow_questions", None) is not False,
+        ),
+        allow_positive_fallback=choose(
+            repository.override_allow_positive_fallback,
+            getattr(global_settings, "allow_positive_fallback", None) is not False,
+        ),
+        allow_suggested_changes=choose(
+            repository.override_allow_suggested_changes,
+            getattr(global_settings, "allow_suggested_changes", None) is not False,
         ),
     )
 

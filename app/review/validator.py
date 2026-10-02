@@ -9,12 +9,20 @@ from app.codex.schemas import (
     ChangeRelation,
     Finding,
     FindingScope,
+    ReviewType,
     Severity,
 )
 from app.review.deduplicator import fingerprint
 from app.review.diff import ChangedFile, normalize_path
 
 ORDER = {Severity.CRITICAL: 4, Severity.HIGH: 3, Severity.MEDIUM: 2, Severity.LOW: 1}
+TYPE_ORDER = {
+    ReviewType.MUST_FIX: 5,
+    ReviewType.SHOULD_FIX: 4,
+    ReviewType.SUGGESTION: 3,
+    ReviewType.QUESTION: 2,
+    ReviewType.POSITIVE: 1,
+}
 DIAGNOSTIC_SCHEMA_VERSION = "1"
 
 
@@ -29,6 +37,7 @@ class FindingValidationResult:
     deduplicated_count: int
     rejection_counts: dict[str, int] = field(default_factory=dict)
     rejection_diagnostics: list["FindingRejectionDiagnostic"] = field(default_factory=list)
+    no_reviewable_reason: str | None = None
 
     @property
     def published_count(self) -> int:
@@ -54,6 +63,7 @@ class FindingRejectionDiagnostic:
     introduced_by_pr: bool | None
     severity: str
     confidence: float
+    review_type: str
     rejection_stage: str
     rejection_reason: str
     path_is_changed: bool
@@ -288,6 +298,67 @@ def _suggested_fix_is_in_scope(finding: Finding, changed: dict[str, ChangedFile]
     return any(anchor in fix for anchor in anchors)
 
 
+def _type_evidence_reason(finding: Finding) -> str | None:
+    """Check intent-specific evidence without weakening legacy defect results."""
+    if finding.review_type in {ReviewType.MUST_FIX, ReviewType.SHOULD_FIX}:
+        # Older executor records did not have the new fields.  A modern output
+        # that supplies any collaboration field must also state a concrete
+        # condition, impact and action; legacy records remain readable.
+        modern = any(
+            value is not None
+            for value in (finding.why_it_matters, finding.suggested_action, finding.suggested_patch)
+        )
+        if modern and not all((finding.condition, finding.impact, finding.suggested_action)):
+            return "REVIEW_TYPE_EVIDENCE_MISSING"
+        return None
+    if finding.scope != FindingScope.LINE:
+        return "REVIEW_TYPE_EVIDENCE_MISSING"
+    if finding.review_type == ReviewType.SUGGESTION:
+        if not finding.suggested_action or not (finding.why_it_matters or finding.body):
+            return "SUGGESTION_NOT_ACTIONABLE"
+        return None
+    if finding.review_type == ReviewType.QUESTION:
+        text = f"{finding.title} {finding.body}".strip()
+        if not finding.why_it_matters:
+            return "QUESTION_NOT_ACTIONABLE"
+        if "?" not in text and "무엇" not in text and "어떤" not in text and "확인" not in text:
+            return "QUESTION_NOT_ACTIONABLE"
+        return None
+    if finding.review_type == ReviewType.POSITIVE:
+        if not finding.why_it_matters or len(finding.why_it_matters.split()) < 3:
+            return "POSITIVE_NOT_SPECIFIC"
+    return None
+
+
+def _suggested_patch_is_valid(finding: Finding) -> bool:
+    patch = finding.suggested_patch
+    if patch is None:
+        return True
+    # GitHub suggestions are replacement snippets, not diffs or a vehicle for
+    # an unbounded code dump.  Multi-line snippets remain supported.
+    return (
+        bool(patch.strip())
+        and "```" not in patch
+        and not patch.lstrip().startswith(("+++", "---", "@@"))
+        and len(patch.splitlines()) <= 20
+    )
+
+
+def _selection_score(finding: Finding) -> tuple[int, float, int, int]:
+    """Stable, testable ordering: developer value before cosmetic location."""
+    actionable = int(bool(finding.suggested_action or finding.suggested_patch))
+    grounded = int(bool(finding.causal_evidence or finding.why_it_matters))
+    return (
+        ORDER[finding.severity] * 100
+        + TYPE_ORDER[finding.review_type] * 10
+        + actionable * 4
+        + grounded,
+        finding.confidence,
+        TYPE_ORDER[finding.review_type],
+        -int(finding.line or 0),
+    )
+
+
 def validate_findings(
     findings: Iterable[Finding],
     changed: dict[str, ChangedFile],
@@ -316,6 +387,11 @@ def validate_findings_with_diagnostics(
     minimum_severity: str = "LOW",
     enabled_categories: tuple[str, ...] = (),
     review_profile: str = "BALANCED",
+    max_inline_comments: int | None = None,
+    minimum_review_type: str = "SUGGESTION",
+    allow_suggestions: bool = True,
+    allow_questions: bool = True,
+    allow_positive_fallback: bool = True,
 ) -> FindingValidationResult:
     existing = existing_fingerprints or set()
     accepted: list[Finding] = []
@@ -350,6 +426,7 @@ def validate_findings_with_diagnostics(
                 introduced_by_pr=finding.introduced_by_pr,
                 severity=finding.severity.value,
                 confidence=finding.confidence,
+                review_type=finding.review_type.value,
                 rejection_stage=stage,
                 rejection_reason=reason,
                 path_is_changed=_path_is_changed(finding, changed),
@@ -361,6 +438,10 @@ def validate_findings_with_diagnostics(
         )
 
     minimum_order = ORDER[Severity(minimum_severity)]
+    try:
+        minimum_type = ReviewType(minimum_review_type)
+    except ValueError as exc:
+        raise ValueError("unsupported minimum review type") from exc
     indexed = list(enumerate(findings, 1))
     indexed.sort(
         key=lambda pair: (
@@ -536,6 +617,25 @@ def validate_findings_with_diagnostics(
         if enabled_categories and finding.category.value not in enabled_categories:
             reject("UNKNOWN_CATEGORY", "policy", finding, finding_index)
             continue
+        if finding.review_type == ReviewType.SUGGESTION and not allow_suggestions:
+            reject("REVIEW_TYPE_DISABLED", "policy", finding, finding_index)
+            continue
+        if finding.review_type == ReviewType.QUESTION and not allow_questions:
+            reject("REVIEW_TYPE_DISABLED", "policy", finding, finding_index)
+            continue
+        if finding.review_type == ReviewType.POSITIVE and not allow_positive_fallback:
+            reject("REVIEW_TYPE_DISABLED", "policy", finding, finding_index)
+            continue
+        # "Minimum" applies to actionable review observations.  Questions
+        # and positive observations are separately controlled because their
+        # value is not a severity ladder.
+        if (
+            finding.review_type
+            in {ReviewType.MUST_FIX, ReviewType.SHOULD_FIX, ReviewType.SUGGESTION}
+            and TYPE_ORDER[finding.review_type] < TYPE_ORDER[minimum_type]
+        ):
+            reject("BELOW_REVIEW_TYPE", "policy", finding, finding_index)
+            continue
         if review_profile == "CONSERVATIVE" and finding.category in {
             Category.PERFORMANCE,
             Category.SIMPLIFICATION,
@@ -547,6 +647,13 @@ def validate_findings_with_diagnostics(
         if not _has_policy_evidence(finding):
             reject("EVIDENCE_NOT_SUPPORTED", "evidence", finding, finding_index)
             continue
+        type_reason = _type_evidence_reason(finding)
+        if type_reason:
+            reject(type_reason, "evidence", finding, finding_index)
+            continue
+        if not _suggested_patch_is_valid(finding):
+            reject("SUGGESTED_PATCH_INVALID", "evidence", finding, finding_index)
+            continue
         evidence_count += 1
         if mark in existing or mark in seen:
             reject("DUPLICATE", "deduplication", finding, finding_index)
@@ -555,17 +662,33 @@ def validate_findings_with_diagnostics(
         accepted.append(finding)
         accepted_indices[id(finding)] = finding_index
         deduplicated_count += 1
-    accepted.sort(
-        key=lambda item: (
-            -ORDER[item.severity],
-            -item.confidence,
-            item.path or "",
-            item.line or 0,
-        )
+    accepted.sort(key=_selection_score, reverse=True)
+    # The configured ordinary budget applies to inline observations.  Clear
+    # high-impact defects may use the bounded emergency budget of five.
+    inline_budget = max_findings if max_inline_comments is None else max_inline_comments
+    has_important = any(
+        item.review_type in {ReviewType.MUST_FIX, ReviewType.SHOULD_FIX}
+        and item.severity in {Severity.CRITICAL, Severity.HIGH}
+        for item in accepted
     )
-    limited = accepted[:max_findings]
+    inline_budget = min(5 if has_important else inline_budget, max_findings)
+    limited: list[Finding] = []
+    positive_seen = False
+    inline_used = 0
+    for item in accepted:
+        if item.review_type == ReviewType.POSITIVE and positive_seen:
+            rejected["POSITIVE_LIMIT_EXCEEDED"] += 1
+            continue
+        if item.scope == FindingScope.LINE and inline_used >= inline_budget:
+            rejected["COMMENT_BUDGET_EXCEEDED"] += 1
+            continue
+        limited.append(item)
+        if item.review_type == ReviewType.POSITIVE:
+            positive_seen = True
+        if item.scope == FindingScope.LINE:
+            inline_used += 1
     if len(accepted) > len(limited):
-        overflow = accepted[max_findings:]
+        overflow = [item for item in accepted if item not in limited]
         rejected["MAX_FINDINGS_EXCEEDED"] += len(overflow)
         for finding in overflow:
             overflow_anchor_kind = _expected_anchor_kind(finding, changed)
@@ -580,6 +703,7 @@ def validate_findings_with_diagnostics(
                     introduced_by_pr=finding.introduced_by_pr,
                     severity=finding.severity.value,
                     confidence=finding.confidence,
+                    review_type=finding.review_type.value,
                     rejection_stage="limit",
                     rejection_reason="MAX_FINDINGS_EXCEEDED",
                     path_is_changed=_path_is_changed(finding, changed),
@@ -610,4 +734,5 @@ def validate_findings_with_diagnostics(
         deduplicated_count=deduplicated_count,
         rejection_counts=dict(rejected),
         rejection_diagnostics=rejection_diagnostics,
+        no_reviewable_reason=("NO_VALID_INLINE_OBSERVATION" if changed and not limited else None),
     )

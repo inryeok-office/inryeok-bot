@@ -118,6 +118,31 @@ def filter_unified_diff(text: str, paths: set[str]) -> str:
     return "".join(result)
 
 
+def no_reviewable_reason(text: str, changed: dict[str, ChangedFile]) -> str | None:
+    """Classify only deterministic exclusion cases; never infer a defect."""
+    if not changed:
+        return (
+            "BINARY_ONLY"
+            if "Binary files " in text or "GIT binary patch" in text
+            else "ALL_FILES_IGNORED"
+        )
+    paths = tuple(changed)
+    if all(
+        path.rsplit("/", 1)[-1] in {"package-lock.json", "poetry.lock", "uv.lock", "Cargo.lock"}
+        for path in paths
+    ):
+        return "LOCKFILE_ONLY"
+    if all(
+        path.startswith(("dist/", "build/", "vendor/", "node_modules/"))
+        or path.endswith((".min.js", ".map"))
+        for path in paths
+    ):
+        return "GENERATED_ONLY"
+    if not any(item.added_lines for item in changed.values()):
+        return "NO_REVIEWABLE_CODE"
+    return None
+
+
 async def _git(
     args: list[str],
     cwd: Path,

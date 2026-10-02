@@ -66,7 +66,12 @@ class IssueCommentEvent(GitHubModel):
 
 
 def parse_review_command(body: str) -> str | None:
-    """Return the V1 command when the first actionable Markdown line is exactly /review."""
+    """Parse one bounded command from the first actionable Markdown line.
+
+    The returned form is intentionally normalized and does not include an
+    unbounded explain question; webhook handling may safely keep that text out
+    of durable diagnostics.
+    """
     in_fence = False
     for raw_line in body.splitlines():
         stripped = raw_line.strip()
@@ -79,7 +84,14 @@ def parse_review_command(body: str) -> str | None:
             stripped.startswith("`") and stripped.endswith("`")
         ):
             continue
-        return "review" if stripped.casefold() == "/review" else None
+        command = " ".join(stripped.casefold().split())
+        if command == "/review":
+            return "review"
+        if command in {"/review summary", "/review help", "/review resolve"}:
+            return command.removeprefix("/review ")
+        if command.startswith("/review explain ") and len(command) > len("/review explain "):
+            return "explain"
+        return None
     return None
 
 

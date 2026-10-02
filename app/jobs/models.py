@@ -257,6 +257,12 @@ class RepositorySettings(Base):
     override_command_cooldown_seconds: Mapped[int | None] = mapped_column(Integer)
     override_review_domain_mode: Mapped[str | None] = mapped_column(String(16))
     override_manual_review_domains: Mapped[str | None] = mapped_column(Text)
+    override_minimum_review_type: Mapped[str | None] = mapped_column(String(16))
+    override_max_inline_comments: Mapped[int | None] = mapped_column(Integer)
+    override_allow_suggestions: Mapped[bool | None] = mapped_column(Boolean)
+    override_allow_questions: Mapped[bool | None] = mapped_column(Boolean)
+    override_allow_positive_fallback: Mapped[bool | None] = mapped_column(Boolean)
+    override_allow_suggested_changes: Mapped[bool | None] = mapped_column(Boolean)
     installation: Mapped[GitHubInstallation | None] = relationship(
         back_populates="repositories", foreign_keys=[installation_fk_id]
     )
@@ -289,6 +295,14 @@ class GlobalReviewSettings(Base):
     codex_timeout_seconds: Mapped[int] = mapped_column(Integer, default=900)
     review_domain_mode: Mapped[str] = mapped_column(String(16), default=ReviewDomainMode.AUTO.value)
     manual_review_domains: Mapped[str] = mapped_column(Text, default="")
+    minimum_review_type: Mapped[str] = mapped_column(String(16), default="SUGGESTION")
+    max_inline_comments: Mapped[int] = mapped_column(Integer, default=3)
+    allow_suggestions: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_questions: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_positive_fallback: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_review_summary: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_repository_config: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_suggested_changes: Mapped[bool] = mapped_column(Boolean, default=True)
     processing_paused: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_by: Mapped[str | None] = mapped_column(String(255))
     updated_at: Mapped[datetime] = mapped_column(
@@ -378,6 +392,11 @@ class ReviewRun(Base):
     publisher_fallback: Mapped[bool | None] = mapped_column(Boolean)
     duplicate_only: Mapped[bool | None] = mapped_column(Boolean)
     partial_review: Mapped[bool | None] = mapped_column(Boolean)
+    review_type_counts: Mapped[dict[str, int] | None] = mapped_column(JSON)
+    severity_counts: Mapped[dict[str, int] | None] = mapped_column(JSON)
+    no_reviewable_reason: Mapped[str | None] = mapped_column(String(64))
+    comment_budget_accepted_count: Mapped[int | None] = mapped_column(Integer)
+    suggested_patch_fallback: Mapped[bool | None] = mapped_column(Boolean)
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("review_jobs.id", ondelete="CASCADE"))
     base_sha: Mapped[str] = mapped_column(String(64))
@@ -428,6 +447,10 @@ class FindingRecord(Base):
     title: Mapped[str] = mapped_column(String(300))
     fingerprint: Mapped[str] = mapped_column(String(64))
     github_comment_id: Mapped[int | None] = mapped_column(BigInteger)
+    review_type: Mapped[str | None] = mapped_column(String(16))
+    blocking: Mapped[bool | None] = mapped_column(Boolean)
+    suggested_patch: Mapped[str | None] = mapped_column(Text)
+    style_guide_reference: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     review_run: Mapped[ReviewRun] = relationship(back_populates="findings")
 
@@ -452,6 +475,7 @@ class ReviewFindingDiagnostic(Base):
     finding_index: Mapped[int] = mapped_column(Integer)
     scope: Mapped[str] = mapped_column(String(16))
     category: Mapped[str] = mapped_column(String(32))
+    review_type: Mapped[str | None] = mapped_column(String(16))
     relation_to_change: Mapped[str | None] = mapped_column(String(32))
     introduced_by_pr: Mapped[bool | None] = mapped_column(Boolean)
     severity: Mapped[str] = mapped_column(String(16))
@@ -466,6 +490,25 @@ class ReviewFindingDiagnostic(Base):
     diagnostic_schema_version: Mapped[str] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     review_run: Mapped[ReviewRun] = relationship(back_populates="rejection_diagnostics")
+
+
+class ReviewFeedbackEvent(Base):
+    """Safe, append-only review feedback; it never changes prompts automatically."""
+
+    __tablename__ = "review_feedback_events"
+    __table_args__ = (UniqueConstraint("delivery_id", name="uq_review_feedback_delivery"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    delivery_id: Mapped[str | None] = mapped_column(String(100))
+    repository_owner: Mapped[str] = mapped_column(String(255))
+    repository_name: Mapped[str] = mapped_column(String(255))
+    head_sha: Mapped[str | None] = mapped_column(String(64))
+    finding_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    github_comment_id: Mapped[int | None] = mapped_column(BigInteger)
+    review_type: Mapped[str | None] = mapped_column(String(16))
+    severity: Mapped[str | None] = mapped_column(String(16))
+    event_type: Mapped[str] = mapped_column(String(32))
+    actor_login: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ReviewPass(Base):

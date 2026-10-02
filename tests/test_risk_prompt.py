@@ -11,8 +11,8 @@ from app.review.validator import validate_findings_with_diagnostics
 
 def test_prompt_version_and_ordered_risk_questions():
     plain = build_prompt("a" * 40, "b" * 40, ["a.py"], {})
-    assert PROMPT_VERSION == "detailed-review-v4-risk-aware"
-    assert "Finding one" in plain and "Never fill a quota" in plain
+    assert PROMPT_VERSION == "detailed-review-v5-collaborative-inline"
+    assert "Do not return empty" in plain and "Never invent a defect" in plain
     assert "webhook URL tokens" not in plain
     diff = Path("tests/fixtures/pr190_initial.diff").read_text(encoding="utf-8")
     prompt = build_prompt("a" * 40, "b" * 40, [], {"risk_signals": detect_risks(diff)}, diff)

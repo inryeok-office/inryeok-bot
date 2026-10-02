@@ -26,7 +26,7 @@ from app.jobs.models import (
 from app.review.context import ContextBudget, select_context
 from app.review.deduplicator import fingerprint
 from app.review.diagnostics import StageCounts, context_manifest
-from app.review.diff import RepositoryCheckout, filter_unified_diff
+from app.review.diff import RepositoryCheckout, filter_unified_diff, no_reviewable_reason
 from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
 from app.review.model_catalog import CLI_DEFAULT, db_catalog_version, load_db_catalog, spec_for
 from app.review.passes import execute_passes
@@ -83,6 +83,7 @@ class ReviewService:
                     finding_index=diagnostic.finding_index,
                     scope=diagnostic.scope,
                     category=diagnostic.category,
+                    review_type=diagnostic.review_type,
                     relation_to_change=diagnostic.relation_to_change,
                     introduced_by_pr=diagnostic.introduced_by_pr,
                     severity=diagnostic.severity,
@@ -377,7 +378,20 @@ class ReviewService:
             effective.minimum_severity,
             effective.enabled_categories,
             effective.review_profile,
+            effective.max_inline_comments,
+            effective.minimum_review_type,
+            effective.allow_suggestions,
+            effective.allow_questions,
+            effective.allow_positive_fallback,
         )
+        if not validation.findings:
+            validation = replace(
+                validation,
+                no_reviewable_reason=(
+                    no_reviewable_reason(manager.diff_text, changed)
+                    or validation.no_reviewable_reason
+                ),
+            )
         findings = validation.findings
         contributed = {id(finding) for finding in findings}
         pass_records = (
@@ -488,6 +502,17 @@ class ReviewService:
             comparison_still_count=comparison["still"],
             comparison_not_detected_count=comparison["not_detected"],
             github_review_id=None,
+            review_type_counts={
+                key: sum(item.review_type.value == key for item in findings)
+                for key in ("MUST_FIX", "SHOULD_FIX", "SUGGESTION", "QUESTION", "POSITIVE")
+            },
+            severity_counts={
+                key: sum(item.severity.value == key for item in findings)
+                for key in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+            },
+            no_reviewable_reason=validation.no_reviewable_reason,
+            comment_budget_accepted_count=validation.inline_count,
+            suggested_patch_fallback=False,
         )
         logger.info(
             "Review diagnostics job=%s files=%s lines=%s raw=%s schema=%s changed_file=%s "
@@ -566,6 +591,8 @@ class ReviewService:
                     {
                         **comparison,
                     },
+                    no_reviewable_reason=validation.no_reviewable_reason,
+                    allow_suggested_changes=effective.allow_suggested_changes,
                 )
                 try:
                     posted = await self.github.create_review(
@@ -596,6 +623,8 @@ class ReviewService:
                             **comparison,
                         },
                         include_inline_comments=False,
+                        no_reviewable_reason=validation.no_reviewable_reason,
+                        allow_suggested_changes=False,
                     )
                     logger.warning(
                         "GitHub rejected inline review locations; retrying summary-only "
@@ -631,6 +660,25 @@ class ReviewService:
         counts.published = len(findings) if run.github_review_id is not None else 0
         run.published_findings_count = counts.published
         run.stage_counts = StageCounts.model_validate(counts.model_dump()).model_dump()
+        comment_ids: dict[tuple[str, int], int] = {}
+        if run.github_review_id is not None:
+            try:
+                comments = await self.github.list_review_comments(
+                    job.installation_id,
+                    job.repository_owner,
+                    job.repository_name,
+                    job.pull_request_number,
+                )
+                comment_ids = {
+                    (str(item["path"]), int(item["line"])): int(item["id"])
+                    for item in comments
+                    if item.get("pull_request_review_id") in {None, run.github_review_id}
+                    and isinstance(item.get("path"), str)
+                    and isinstance(item.get("line"), int)
+                    and isinstance(item.get("id"), int)
+                }
+            except Exception:
+                logger.warning("Unable to read published inline comment identifiers job=%s", job.id)
         for finding in findings:
             # FindingRecord is the legacy inline-finding index. FILE/PR
             # findings are retained in the ReviewRun summary and must not be
@@ -647,7 +695,11 @@ class ReviewService:
                     confidence=finding.confidence,
                     title=finding.title,
                     fingerprint=fingerprint(finding),
-                    github_comment_id=None,
+                    github_comment_id=comment_ids.get((finding.path, finding.line)),
+                    review_type=finding.review_type.value,
+                    blocking=finding.blocking,
+                    suggested_patch=finding.suggested_patch,
+                    style_guide_reference=finding.style_guide_reference,
                 )
             )
         job.terminal_outcome = (

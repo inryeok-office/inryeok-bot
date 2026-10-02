@@ -6,47 +6,70 @@ from typing import Any
 from app.codex.schemas import Finding
 
 _SEVERITY_LABELS = {"CRITICAL": "Critical", "HIGH": "High", "MEDIUM": "Medium", "LOW": "Low"}
-_SEVERITY_ICONS = {"CRITICAL": "🚨", "HIGH": "🔴", "MEDIUM": "🟠", "LOW": "🟡"}
+_TYPE_LABELS = {
+    "MUST_FIX": "필수 수정",
+    "SHOULD_FIX": "수정 권장",
+    "SUGGESTION": "제안",
+    "QUESTION": "확인 질문",
+    "POSITIVE": "좋았던 점",
+}
 
 
 def review_marker(
     owner: str, repository: str, pull_request: int, head_sha: str, prompt_version: str
 ) -> str:
     identity = f"{owner.casefold()}/{repository.casefold()}#{pull_request}:{head_sha}:{prompt_version}:review"
-    return f"v2:{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
+    return f"v3:{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
 
 
 def _inline_text(value: str) -> str:
-    compact = " ".join(value.strip().splitlines())
-    return compact.replace("\\", "\\\\").replace("`", "\\`").replace("#", "\\#")
+    return (
+        " ".join(value.strip().splitlines())
+        .replace("\\", "\\\\")
+        .replace("`", "\\`")
+        .replace("#", "\\#")
+    )
 
 
 def _summary_item(finding: Finding) -> str:
-    return (
-        f"- **{finding.severity.value} · {finding.category.value}** — {_inline_text(finding.title)}"
-    )
+    return f"- **{_TYPE_LABELS[finding.review_type.value]} · {finding.severity.value}** {_inline_text(finding.title)}"
 
 
 def _summary_finding(finding: Finding) -> str:
-    """Render a FILE/PR finding without inventing an inline location."""
     location = f"`{_inline_text(finding.path)}`" if finding.path else "PR 전체"
-    sections = [f"#### {location} · {_inline_text(finding.title)}", finding.body.strip()]
-    if finding.condition:
-        sections.append(f"**발생 조건**: {_inline_text(finding.condition)}")
-    if finding.impact:
-        sections.append(f"**영향**: {_inline_text(finding.impact)}")
-    if finding.evidence:
-        sections.append(f"**근거**: {_inline_text(finding.evidence)}")
-    if finding.suggested_fix:
-        sections.append(f"**수정 방향**: {_inline_text(finding.suggested_fix)}")
-    return f"**{finding.severity.value} · {finding.category.value}**\n\n" + "\n\n".join(sections)
+    parts = [f"#### {location} · {_inline_text(finding.title)}", finding.body.strip()]
+    for label, value in (
+        ("발생 조건", finding.condition),
+        ("영향", finding.impact),
+        ("근거", finding.evidence),
+        ("이유", finding.why_it_matters),
+        ("제안", finding.suggested_action),
+    ):
+        if value:
+            parts.append(f"**{label}**: {_inline_text(value)}")
+    return "\n\n".join(parts)
 
 
 def _finding_body(finding: Finding) -> str:
-    return (
-        f"**{_SEVERITY_ICONS[finding.severity.value]} {finding.severity.value} · {finding.category.value}**\n\n"
-        f"### {_inline_text(finding.title)}\n\n{finding.body.strip()}"
-    )
+    parts = [
+        f"**{_TYPE_LABELS[finding.review_type.value]} · {finding.severity.value}**",
+        f"### {_inline_text(finding.title)}",
+        finding.body.strip(),
+    ]
+    if finding.why_it_matters:
+        parts.append(f"**이유**: {finding.why_it_matters.strip()}")
+    if finding.suggested_action:
+        parts.append(f"**제안**: {finding.suggested_action.strip()}")
+    if finding.style_guide_reference:
+        parts.append(f"**스타일 가이드**: {_inline_text(finding.style_guide_reference)}")
+    return "\n\n".join(parts)
+
+
+def _comment_body(finding: Finding, allow_suggested_changes: bool) -> str:
+    body = _finding_body(finding)
+    if allow_suggested_changes and finding.suggested_patch:
+        return body + "\n\n```suggestion\n" + finding.suggested_patch.strip() + "\n```"
+    return body
 
 
 def build_review_payload(
@@ -58,86 +81,77 @@ def build_review_payload(
     marker: str = "v1",
     comparison: dict[str, int] | None = None,
     include_inline_comments: bool = True,
+    no_reviewable_reason: str | None = None,
+    allow_suggested_changes: bool = True,
 ) -> dict[str, Any]:
-    inline_findings = [
-        item for item in findings if include_inline_comments and item.scope.value == "LINE"
-    ]
-    summary_findings = [
+    inline = [item for item in findings if include_inline_comments and item.scope.value == "LINE"]
+    summary_only = [
         item for item in findings if item.scope.value != "LINE" or not include_inline_comments
     ]
-    counts = Counter(item.severity.value for item in findings)
-    table = "\n".join(
-        f"| {_SEVERITY_LABELS[severity]} | {counts.get(severity, 0)} |"
-        for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+    severity_counts = Counter(item.severity.value for item in findings)
+    type_counts = Counter(item.review_type.value for item in findings)
+    severity_table = "\n".join(
+        f"| {_SEVERITY_LABELS[value]} | {severity_counts.get(value, 0)} |"
+        for value in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
     )
-    english = language == "en"
-    if findings:
+    type_text = ", ".join(
+        f"{_TYPE_LABELS[value]} {type_counts.get(value, 0)}" for value in _TYPE_LABELS
+    )
+    if language == "en":
         overview = (
-            f"Found **{len(findings)}** issue(s) that need attention."
-            if english
-            else f"수정이 필요한 문제 **{len(findings)}개**를 발견했습니다."
+            f"Reviewed **{reviewed_file_count} file(s)** and posted {len(inline)} inline observation(s)."
+            if findings
+            else f"Reviewed **{reviewed_file_count} file(s)**."
         )
         details = (
-            ("### Key findings" if english else "### 주요 내용")
-            + "\n\n"
-            + "\n".join(_summary_item(item) for item in findings)
+            "### Key observations\n\n" + "\n".join(_summary_item(item) for item in findings)
+            if findings
+            else "### Complete\n\nNo inline observation was published."
         )
-        if summary_findings:
-            details += "\n\n### 파일·PR 단위 검토\n\n" + "\n\n".join(
-                _summary_finding(item) for item in summary_findings
+        if summary_only:
+            details += "\n\n### File and PR scope\n\n" + "\n\n".join(
+                _summary_finding(item) for item in summary_only
             )
+        comparison_block = ""
+        if comparison and rerun:
+            comparison_block = (
+                "\n\n### Rerun comparison\n\n| Category | Count |\n| --- | ---: |\n"
+                + f"| New findings | {comparison.get('new', 0)} |\n| Still detected | {comparison.get('still', 0)} |\n| Not detected in this review | {comparison.get('not_detected', 0)} |\n\n> Not detected in this review does not confirm resolution."
+            )
+        body_prefix, type_prefix, head_note = (
+            "## Review result",
+            "Types",
+            f"Reviewed head: `{head_sha[:12]}` · use `/review` for the latest head.",
+        )
     else:
         overview = (
-            "No issues requiring an inline comment were found."
-            if english
-            else "수정이 필요한 문제를 찾지 못했습니다."
+            f"변경된 **{reviewed_file_count}개 파일**을 검토했고 인라인 관찰 {len(inline)}개를 남겼습니다."
+            if findings
+            else f"변경된 **{reviewed_file_count}개 파일**을 검토했습니다."
         )
         details = (
-            "### Complete\n\nThe changes were reviewed and no inline comments need to be posted."
-            if english
-            else "### 완료\n\n변경 사항을 검토했으며 게시할 인라인 코멘트가 없습니다."
+            "### 주요 관찰\n\n" + "\n".join(_summary_item(item) for item in findings)
+            if findings
+            else "### 완료\n\n수정이 필요한 문제를 찾지 못했습니다."
         )
-    rerun_note = (
-        ("\n\n> This is a rerun of the review." if english else "\n\n> 재실행한 검토 결과입니다.")
-        if rerun
-        else ""
-    )
-    comparison_block = ""
-    if comparison and rerun:
-        if english:
-            comparison_block = (
-                "\n\n### Rerun comparison\n\n"
-                "| Category | Count |\n| --- | ---: |\n"
-                f"| New findings | {comparison.get('new', 0)} |\n"
-                f"| Still detected | {comparison.get('still', 0)} |\n"
-                f"| Not detected in this review | {comparison.get('not_detected', 0)} |\n\n"
-                "> Not detected in this review does not confirm that the issue is resolved."
+        if summary_only:
+            details += "\n\n### 파일·PR 단위 검토\n\n" + "\n\n".join(
+                _summary_finding(item) for item in summary_only
             )
-        else:
+        if no_reviewable_reason and not findings:
+            details += f" 검증 가능한 인라인 관찰은 생성하지 않았습니다 (`{no_reviewable_reason}`)."
+        comparison_block = ""
+        if comparison and rerun:
             comparison_block = (
-                "\n\n### 재리뷰 비교\n\n"
-                "| 구분 | 개수 |\n| --- | ---: |\n"
-                f"| 새로운 Finding | {comparison.get('new', 0)} |\n"
-                f"| 계속 확인된 Finding | {comparison.get('still', 0)} |\n"
-                f"| 이번 리뷰에서 다시 발견되지 않음 | {comparison.get('not_detected', 0)} |\n\n"
-                "> 이번 리뷰에서 다시 발견되지 않았다는 것이 해결을 확정하는 것은 아닙니다."
+                "\n\n### 재리뷰 비교\n\n| 구분 | 개수 |\n| --- | ---: |\n"
+                + f"| 새로운 Finding | {comparison.get('new', 0)} |\n| 계속 확인된 Finding | {comparison.get('still', 0)} |\n| 이번 리뷰에서 다시 발견되지 않음 | {comparison.get('not_detected', 0)} |\n\n> 이번 리뷰에서 다시 발견되지 않았다고 해결을 확정하지는 않습니다."
             )
-    body = (
-        ("## Review result\n\n" if english else "## 리뷰 결과\n\n")
-        + (
-            f"Reviewed **{reviewed_file_count} file(s)**. {overview}\n\n"
-            if english
-            else f"변경된 **{reviewed_file_count}개 파일**을 검토했으며, {overview}\n\n"
+        body_prefix, type_prefix, head_note = (
+            "## 리뷰 결과",
+            "유형",
+            f"검토한 head: `{head_sha[:12]}` · 최신 head에서 다시 검토하려면 `/review`를 작성하세요.",
         )
-        + (
-            "| Severity | Count |\n| --- | ---: |\n"
-            if english
-            else "| 심각도 | 개수 |\n| --- | ---: |\n"
-        )
-        + f"{table}\n\n{details}{comparison_block}{rerun_note}\n\n"
-        + (f"Reviewed head: `{head_sha[:12]}`" if english else f"검토한 head: `{head_sha[:12]}`")
-        + f"\n\n<!-- inryeok-review:{marker} -->"
-    )
+    body = f"{body_prefix}\n\n{overview}\n\n| 심각도 | 개수 |\n| --- | ---: |\n{severity_table}\n\n{type_prefix}: {type_text}\n\n{details}{comparison_block}\n\n{head_note}\n\n<!-- inryeok-review:{marker} -->"
     return {
         "commit_id": head_sha,
         "event": "COMMENT",
@@ -147,8 +161,8 @@ def build_review_payload(
                 "path": item.path,
                 "line": item.line,
                 "side": item.side or "RIGHT",
-                "body": _finding_body(item),
+                "body": _comment_body(item, allow_suggested_changes),
             }
-            for item in inline_findings
+            for item in inline
         ],
     }
