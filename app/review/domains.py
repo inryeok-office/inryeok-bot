@@ -3,8 +3,10 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from app.jobs.models import ReviewDomain, ReviewDomainMode
+from app.review.contracts import validate_prompt_version
 
 PROMPT_VERSION = "detailed-review-v5-collaborative-inline"
+validate_prompt_version(PROMPT_VERSION)
 
 
 @dataclass(frozen=True)

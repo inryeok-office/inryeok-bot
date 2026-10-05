@@ -17,8 +17,12 @@ from app.jobs.models import JobStatus, ReviewJob
 from app.jobs.repository import JobRepository
 from app.logging import configure_logging
 from app.review.diff import DiffError
-from app.review.failures import ReviewFailure, failure_from_exception
-from app.review.service import ReviewService, ReviewSkipped
+from app.review.failures import (
+    ReviewFailure,
+    failure_from_exception,
+    job_snapshot_persistence_failure,
+)
+from app.review.service import JobSnapshotPersistenceError, ReviewService, ReviewSkipped
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +220,7 @@ async def run_worker() -> None:
                 except TimeoutError:
                     pass
                 continue
+            job_id = job.id
             github: GitHubClient | None = None
             try:
                 github = GitHubClient(settings)
@@ -235,6 +240,24 @@ async def run_worker() -> None:
                     await session.refresh(job)
                 await ReviewService(session, github, runner).execute(job, execution_id)
                 await repository.finish(job, JobStatus.SUCCEEDED)
+            except JobSnapshotPersistenceError:
+                # This flush happens before the executor request.  Roll back before
+                # reading any expired ORM state, then use a fresh row to record the
+                # terminal failure without creating a GitHub failure notice.
+                await session.rollback()
+                persisted_job = await session.get(ReviewJob, job_id)
+                if persisted_job is None:
+                    logger.error("Job %s disappeared after snapshot persistence failure", job_id)
+                    continue
+                failure = job_snapshot_persistence_failure()
+                _apply_failure(persisted_job, failure)
+                await repository.finish(
+                    persisted_job,
+                    JobStatus.FAILED,
+                    failure.error_code,
+                    failure.operator_message_ko,
+                )
+                job = persisted_job
             except ReviewSkipped as exc:
                 await finish_after_error(
                     session, repository, job, JobStatus.SKIPPED, exc.outcome_code, str(exc)
@@ -287,7 +310,15 @@ async def run_worker() -> None:
                 raise
             except Exception as exc:
                 assert github is not None
-                logger.warning("Review job %s failed with an unexpected error", job.id)
+                # A flush can expire ``job``.  Preserve the primitive id and
+                # clear the transaction before accessing mapped attributes.
+                logger.warning("Review job %s failed with an unexpected error", job_id)
+                await session.rollback()
+                persisted_job = await session.get(ReviewJob, job_id)
+                if persisted_job is None:
+                    logger.error("Job %s disappeared after an unexpected error", job_id)
+                    continue
+                job = persisted_job
                 failure = failure_from_exception(exc, job=job)
                 _apply_failure(job, failure)
                 await finish_after_error(

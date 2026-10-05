@@ -42,6 +42,9 @@ _SCHEMA_CODES = {
     "OUTPUT_MODEL_VALIDATION_FAILED": "OUTPUT_MODEL_VALIDATION_FAILED",
 }
 _MESSAGES = {
+    "JOB_PERSISTENCE_FAILURE": (
+        "리뷰 시작 정보를 저장하지 못했습니다. 리뷰 실행은 시작되지 않았습니다."
+    ),
     "OUTPUT_SCHEMA_MISMATCH": "리뷰 결과 형식을 검증하는 과정에서 오류가 발생했습니다. 동일 요청을 반복하지 말고 관리자 확인 후 다시 시도해 주세요.",  # noqa: E501
     "OUTPUT_JSON_INVALID": "리뷰 결과를 읽는 과정에서 오류가 발생했습니다. 동일 요청을 반복하지 말고 관리자 확인 후 다시 시도해 주세요.",  # noqa: E501
     "CODEX_QUOTA_EXCEEDED": "현재 Codex 사용 한도에 도달해 리뷰를 실행하지 못했습니다. 사용량이 갱신된 뒤 다시 요청해 주세요.",  # noqa: E501
@@ -85,6 +88,23 @@ class ReviewFailure:
     diagnostic_extraction_failed: bool = False
     occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     safe_metadata: dict[str, str | int | bool] = field(default_factory=dict)
+
+
+def job_snapshot_persistence_failure() -> ReviewFailure:
+    """A bounded failure for a flush before the executor request begins."""
+    return ReviewFailure(
+        error_code="JOB_PERSISTENCE_FAILURE",
+        category=FailureCategory.DATABASE.value,
+        stage="job_snapshot_persist",
+        retryable=False,
+        retry_policy=RetryPolicy.NEVER.value,
+        user_action_required=False,
+        user_message_ko=_MESSAGES["JOB_PERSISTENCE_FAILURE"],
+        operator_message_ko=(
+            "JOB_PERSISTENCE_FAILURE: snapshot flush failed before executor request."
+        ),
+        safe_signature="job_snapshot_persist",
+    )
 
 
 def _diagnostic_parts(

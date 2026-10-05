@@ -21,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.review.contracts import PROMPT_VERSION_MAX_LENGTH
 
 
 class JobStatus(StrEnum):
@@ -180,7 +181,7 @@ class ReviewJob(Base):
     detected_review_domains: Mapped[str | None] = mapped_column(Text)
     effective_review_domains: Mapped[str | None] = mapped_column(Text)
     detection_reasons: Mapped[str | None] = mapped_column(Text)
-    prompt_version: Mapped[str | None] = mapped_column(String(32))
+    prompt_version: Mapped[str | None] = mapped_column(String(PROMPT_VERSION_MAX_LENGTH))
     review_profile: Mapped[str | None] = mapped_column(String(32))
     model: Mapped[str | None] = mapped_column(String(128))
     reasoning_effort: Mapped[str | None] = mapped_column(String(16))

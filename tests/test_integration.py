@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import BigInteger, select
+from sqlalchemy.exc import DataError
 
 from app.codex.runner import FakeRunner
 from app.codex.schemas import (
@@ -27,7 +28,7 @@ from app.jobs.models import (
     TriggerType,
 )
 from app.review.diff import ChangedFile
-from app.review.service import ReviewService, ReviewSkipped
+from app.review.service import JobSnapshotPersistenceError, ReviewService, ReviewSkipped
 
 
 class Tokens:
@@ -152,6 +153,52 @@ def isolated_checkout(tmp_path, monkeypatch):
 def test_github_published_identifier_columns_are_bigint() -> None:
     assert isinstance(ReviewRun.__table__.c.github_review_id.type, BigInteger)
     assert isinstance(FindingRecord.__table__.c.github_comment_id.type, BigInteger)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_flush_failure_stops_before_runner(app_client, monkeypatch) -> None:
+    """A database persistence error must not be mistaken for executor uncertainty."""
+    _, factory = app_client
+    monkeypatch.setattr("app.review.service.RepositoryCheckout", FakeCheckout)
+
+    class CountingRunner(FakeRunner):
+        calls = 0
+
+        async def run(self, *args: object, **kwargs: object) -> ReviewOutput:
+            self.calls += 1
+            return await super().run(*args, **kwargs)
+
+    async with factory() as session:
+        session.add_all(
+            [
+                GlobalReviewSettings(id=1),
+                RepositorySettings(
+                    installation_id=1, repository_owner="acme", repository_name="repo"
+                ),
+            ]
+        )
+        job = ReviewJob(
+            delivery_id="snapshot-flush-failure",
+            installation_id=1,
+            repository_owner="acme",
+            repository_name="repo",
+            pull_request_number=7,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            trigger_type=TriggerType.AUTO,
+            execution_id="e" * 32,
+        )
+        session.add(job)
+        await session.commit()
+
+        async def fail_flush() -> None:
+            raise DataError("UPDATE review_jobs", {}, Exception("bounded"))
+
+        monkeypatch.setattr(session, "flush", fail_flush)
+        runner = CountingRunner(ReviewOutput(summary="unused", findings=[]))
+        with pytest.raises(JobSnapshotPersistenceError):
+            await ReviewService(session, FakeGitHub(), runner).execute(job, job.execution_id)
+        assert runner.calls == 0
 
 
 @pytest.mark.asyncio

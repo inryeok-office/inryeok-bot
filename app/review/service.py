@@ -24,6 +24,7 @@ from app.jobs.models import (
     TriggerType,
 )
 from app.review.context import ContextBudget, select_context
+from app.review.contracts import validate_prompt_version
 from app.review.deduplicator import fingerprint
 from app.review.diagnostics import StageCounts, context_manifest
 from app.review.diff import RepositoryCheckout, filter_unified_diff, no_reviewable_reason
@@ -42,6 +43,10 @@ class ReviewSkipped(RuntimeError):
     def __init__(self, message: str, outcome_code: str = "SKIPPED") -> None:
         super().__init__(message)
         self.outcome_code = outcome_code
+
+
+class JobSnapshotPersistenceError(RuntimeError):
+    """The executor has not been called because the immutable snapshot failed to persist."""
 
 
 class ReviewService:
@@ -277,8 +282,11 @@ class ReviewService:
             job.detected_review_domains = ",".join(detection.domains)
             job.effective_review_domains = ",".join(domains)
             job.detection_reasons = "\n".join(detection.reasons)[:2000]
-            job.prompt_version = PROMPT_VERSION
-            await self.session.flush()
+            job.prompt_version = validate_prompt_version(PROMPT_VERSION)
+            try:
+                await self.session.flush()
+            except Exception as exc:
+                raise JobSnapshotPersistenceError("job snapshot persistence failed") from exc
             prompt = build_prompt(
                 job.base_sha,
                 job.head_sha,
