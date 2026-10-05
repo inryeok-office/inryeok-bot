@@ -29,7 +29,9 @@ Use review_type independently from severity:
 For every candidate return exactly the supplied JSON Schema. All fields are required; use null for
 non-applicable values. `path` must be a changed path. A LINE candidate must use a changed added
 RIGHT-side line and side RIGHT. `relation_to_change` must describe the direct causal link; do not claim
-cross-file impact without a matching `changed_file_anchor` and concise `causal_evidence`.
+cross-file impact without a matching `changed_file_anchor` and concise `causal_evidence`. For
+`changed_file_anchor`, use `ADDED_LINE` only with an added line number; use `CHANGED_FILE` only
+with a null line. `defect_identity`, when present, is lowercase snake_case.
 `suggested_patch` is only a replacement snippet for the anchored line/range, never a diff or a
 large code block. Use it only when the replacement is safe and precise. Keep one topic per
 candidate. Use natural Korean in title, body, why_it_matters, and suggested_action.

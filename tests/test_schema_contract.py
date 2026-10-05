@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from app.codex.schemas import ReviewOutput
+
 
 def test_wire_schema_is_flat_strict_and_all_properties_required() -> None:
     schema = json.loads(Path("review-schema.json").read_text(encoding="utf-8"))
@@ -31,3 +33,42 @@ def test_wire_schema_accepts_all_scopes_with_null_non_applicable_fields() -> Non
     assert finding["line"]["type"] == ["integer", "null"]
     assert finding["side"]["type"] == ["string", "null"]
     assert finding["path"]["type"] == ["string", "null"]
+
+
+def test_wire_anchor_shapes_are_parsed_then_checked_by_semantic_validation() -> None:
+    """The executor wire model must accept every shape allowed by its JSON schema."""
+    base = {
+        "scope": "FILE",
+        "path": "src/example.py",
+        "line": None,
+        "side": None,
+        "review_type": "SUGGESTION",
+        "category": "SIMPLIFICATION",
+        "severity": "LOW",
+        "confidence": 0.9,
+        "title": "title",
+        "body": "body",
+        "condition": None,
+        "impact": None,
+        "evidence": None,
+        "suggested_fix": None,
+        "domain": None,
+        "relation_to_change": "DIRECT_CHANGE",
+        "introduced_by_pr": True,
+        "changed_symbol": None,
+        "causal_evidence": None,
+        "defect_identity": None,
+        "causal_chain": None,
+        "why_it_matters": None,
+        "suggested_action": None,
+        "suggested_patch": None,
+        "blocking": False,
+        "style_guide_reference": None,
+    }
+    for anchor in (
+        {"kind": "ADDED_LINE", "path": "src/example.py", "line": None},
+        {"kind": "CHANGED_FILE", "path": "src/example.py", "line": 3},
+    ):
+        ReviewOutput.model_validate(
+            {"summary": "ok", "findings": [{**base, "changed_file_anchor": anchor}]}
+        )

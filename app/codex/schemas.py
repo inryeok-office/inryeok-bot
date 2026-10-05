@@ -79,14 +79,6 @@ class ChangedFileAnchor(BaseModel):
     path: str = Field(min_length=1, max_length=1024)
     line: int | None = Field(default=None, ge=1)
 
-    @model_validator(mode="after")
-    def validate_line_shape(self) -> "ChangedFileAnchor":
-        if self.kind == ChangedAnchorKind.ADDED_LINE and self.line is None:
-            raise ValueError("ADDED_LINE anchors require a line")
-        if self.kind == ChangedAnchorKind.CHANGED_FILE and self.line is not None:
-            raise ValueError("CHANGED_FILE anchors cannot include a line")
-        return self
-
 
 class Finding(BaseModel):
     model_config = ConfigDict(extra="forbid")
