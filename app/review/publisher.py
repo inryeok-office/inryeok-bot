@@ -6,6 +6,7 @@ from typing import Any
 from app.codex.schemas import Finding
 
 _SEVERITY_LABELS = {"CRITICAL": "Critical", "HIGH": "High", "MEDIUM": "Medium", "LOW": "Low"}
+_SEVERITY_ICONS = {"CRITICAL": "🚨", "HIGH": "🔴", "MEDIUM": "🟠", "LOW": "🟡"}
 _TYPE_LABELS = {
     "MUST_FIX": "필수 수정",
     "SHOULD_FIX": "수정 권장",
@@ -52,7 +53,7 @@ def _summary_finding(finding: Finding) -> str:
 
 def _finding_body(finding: Finding) -> str:
     parts = [
-        f"**{_TYPE_LABELS[finding.review_type.value]} · {finding.severity.value}**",
+        f"**{_SEVERITY_ICONS[finding.severity.value]} {_TYPE_LABELS[finding.review_type.value]} · {finding.severity.value}**",
         f"### {_inline_text(finding.title)}",
         finding.body.strip(),
     ]

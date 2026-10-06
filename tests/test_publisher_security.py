@@ -63,7 +63,7 @@ def test_inline_review_keeps_valid_markdown_without_forcing_sections() -> None:
     inline = build_review_payload([finding], 1, "b" * 40)["comments"][0]["body"]
 
     assert inline.startswith(
-        "**\ud544\uc218 \uc218\uc815 \u00b7 HIGH**\n\n### findById result check"
+        "**🔴 \ud544\uc218 \uc218\uc815 \u00b7 HIGH**\n\n### findById result check"
     )
     assert "`findById()`" in inline
     assert "**\uc601\ud5a5**" in inline
