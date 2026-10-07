@@ -608,7 +608,15 @@ def validate_findings_with_diagnostics(
             reject("BELOW_CONFIDENCE", "confidence", finding, finding_index)
             continue
         confidence_count += 1
-        if finding.severity == Severity.LOW and not include_low:
+        # Collaboration observations are not defect-severity assertions. A
+        # grounded low-severity suggestion, question, or concrete positive is
+        # governed by its own evidence/type policy and bounded inline budget;
+        # do not silently discard it because the defect-only low switch is off.
+        if (
+            finding.severity == Severity.LOW
+            and not include_low
+            and finding.review_type in {ReviewType.MUST_FIX, ReviewType.SHOULD_FIX}
+        ):
             reject("LOW_DISABLED", "severity", finding, finding_index)
             continue
         if ORDER[finding.severity] < minimum_order:

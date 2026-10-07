@@ -185,6 +185,11 @@ class ReviewJob(Base):
     review_profile: Mapped[str | None] = mapped_column(String(32))
     model: Mapped[str | None] = mapped_column(String(128))
     reasoning_effort: Mapped[str | None] = mapped_column(String(16))
+    # Immutable locale presentation snapshot. Historical jobs remain NULL;
+    # execution falls back to the documented default rather than guessing.
+    effective_locale: Mapped[str | None] = mapped_column(String(8))
+    locale_source: Mapped[str | None] = mapped_column(String(32))
+    message_catalog_version: Mapped[str | None] = mapped_column(String(16))
     # Immutable execution-policy snapshots.  These are nullable so historical
     # jobs are never backfilled with guesses.
     model_source: Mapped[str | None] = mapped_column(String(32))

@@ -659,6 +659,13 @@ async def github_webhook(
                     if model_spec is not None
                     else None
                 ),
+                effective_locale=effective.language,
+                locale_source=(
+                    "REPOSITORY_OVERRIDE"
+                    if repo_settings.override_language is not None
+                    else "GLOBAL_DEFAULT"
+                ),
+                message_catalog_version="1",
             )
         except QueueCapacityError:
             await session.rollback()

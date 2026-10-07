@@ -46,6 +46,19 @@ def test_actionable_suggestion_and_specific_positive_are_publishable() -> None:
     ]
 
 
+def test_grounded_low_positive_is_not_filtered_by_defect_low_switch() -> None:
+    changed = {"src/example.py": ChangedFile("src/example.py", frozenset({10}))}
+    result = validate_findings_with_diagnostics(
+        [observation(ReviewType.POSITIVE, suggested_action=None)],
+        changed,
+        0.8,
+        False,
+        10,
+        max_inline_comments=3,
+    )
+    assert [item.review_type for item in result.findings] == [ReviewType.POSITIVE]
+
+
 def test_generic_positive_and_unactionable_question_are_rejected() -> None:
     changed = {"src/example.py": ChangedFile("src/example.py", frozenset({10, 11}))}
     result = validate_findings_with_diagnostics(

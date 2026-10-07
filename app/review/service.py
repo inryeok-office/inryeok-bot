@@ -29,6 +29,7 @@ from app.review.deduplicator import fingerprint
 from app.review.diagnostics import StageCounts, context_manifest
 from app.review.diff import RepositoryCheckout, filter_unified_diff, no_reviewable_reason
 from app.review.domains import PROMPT_VERSION, detect_domains, effective_domains
+from app.review.i18n import CATALOG_VERSION, normalize_locale
 from app.review.model_catalog import CLI_DEFAULT, db_catalog_version, load_db_catalog, spec_for
 from app.review.passes import execute_passes
 from app.review.publisher import build_review_payload, review_marker
@@ -161,6 +162,10 @@ class ReviewService:
                 model=job.model,
                 reasoning_effort=job.reasoning_effort or "default",
             )
+        # Locale is presentation policy too: do not reinterpret queued work
+        # after an administrator changes a global or repository setting.
+        if job.effective_locale is not None:
+            effective = replace(effective, language=normalize_locale(job.effective_locale))
         # A repeated /review for the same head must not spend another Codex
         # execution merely to discover the existing GitHub marker afterwards.
         # The head is the idempotency boundary even if other policy inputs
@@ -188,6 +193,11 @@ class ReviewService:
         job.model = effective.model
         job.reasoning_effort = effective.reasoning_effort
         job.review_profile = effective.review_profile
+        job.effective_locale = job.effective_locale or normalize_locale(effective.language)
+        job.locale_source = job.locale_source or (
+            "REPOSITORY_OVERRIDE" if config.override_language is not None else "GLOBAL_DEFAULT"
+        )
+        job.message_catalog_version = job.message_catalog_version or CATALOG_VERSION
         job.model_source = job.model_source or (
             "REPOSITORY_OVERRIDE" if config.override_model is not None else "GLOBAL_DEFAULT"
         )

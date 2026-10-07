@@ -47,9 +47,9 @@ def test_review_payload_renders_korean_markdown_summary() -> None:
     assert payload["body"].startswith("## \ub9ac\ubdf0 \uacb0\uacfc")
     assert "\uc778\ub77c\uc778 \uad00\ucc30 1\uac1c" in payload["body"]
     assert "| \uc2ec\uac01\ub3c4 | \uac1c\uc218 |" in payload["body"]
-    assert "| Critical | 0 |" in payload["body"]
-    assert "| High | 1 |" in payload["body"]
-    assert "| Medium | 0 |" in payload["body"]
+    assert "| \uce58\uba85\uc801 | 0 |" in payload["body"]
+    assert "| \ub192\uc74c | 1 |" in payload["body"]
+    assert "| \uc911\uac04 | 0 |" in payload["body"]
     assert "### \uc8fc\uc694 \uad00\ucc30" in payload["body"]
     assert "**\ud544\uc218 \uc218\uc815 \u00b7 HIGH**" in payload["body"]
     assert payload["body"].endswith("<!-- inryeok-review:v1 -->")
@@ -68,6 +68,14 @@ def test_inline_review_keeps_valid_markdown_without_forcing_sections() -> None:
     assert "`findById()`" in inline
     assert "**\uc601\ud5a5**" in inline
     assert "```" not in inline
+
+
+def test_english_system_text_has_no_korean_labels() -> None:
+    payload = build_review_payload([_finding()], 1, "c" * 40, language="en")
+    assert "| Severity | Count |" in payload["body"]
+    assert "Must fix 1" in payload["body"]
+    assert "\uc2ec\uac01\ub3c4" not in payload["body"]
+    assert "\ud544\uc218 \uc218\uc815" not in payload["comments"][0]["body"]
 
 
 def test_file_and_pr_findings_are_summary_only() -> None:
